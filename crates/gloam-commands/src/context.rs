@@ -14,6 +14,7 @@ pub struct Context<D> {
 }
 
 impl<D> Context<D> {
+    #[allow(dead_code)]
     pub(crate) fn new(runtime: Arc<Runtime<D>>, command_name: &'static str) -> Self {
         Self {
             runtime,
