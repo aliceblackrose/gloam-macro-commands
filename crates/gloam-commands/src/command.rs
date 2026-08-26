@@ -34,10 +34,7 @@ pub struct SlashCommand<D> {
 impl<D> SlashCommand<D> {
     /// Creates a slash command from static metadata and an erased handler.
     #[must_use]
-    pub const fn new(
-        descriptor: &'static CommandDescriptor,
-        handler: CommandHandler<D>,
-    ) -> Self {
+    pub const fn new(descriptor: &'static CommandDescriptor, handler: CommandHandler<D>) -> Self {
         Self {
             descriptor,
             handler,
