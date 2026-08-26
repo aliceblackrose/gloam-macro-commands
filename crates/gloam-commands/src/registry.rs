@@ -87,7 +87,10 @@ mod tests {
         let mut registry = CommandRegistry::new();
         registry.insert(SlashCommand::new(&PING, handler))?;
 
-        assert_eq!(registry.get("ping").map(|command| command.descriptor()), Some(&PING));
+        assert_eq!(
+            registry.get("ping").map(|command| command.descriptor()),
+            Some(&PING)
+        );
         assert!(registry.get("missing").is_none());
         Ok(())
     }
