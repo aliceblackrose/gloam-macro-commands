@@ -9,7 +9,6 @@ use syn::{
     ext::IdentExt,
     parse::{Parse, ParseStream},
     parse2,
-    spanned::Spanned,
 };
 
 static COMMAND_NAME: LazyLock<Regex> = LazyLock::new(|| {
