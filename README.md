@@ -2,7 +2,7 @@
 
 A focused Discord **slash-command framework** for [Gloamwire](https://github.com/cybellereaper/gloamwire), written for Rust 1.98 and Edition 2024.
 
-> **Current status:** Phase 1 — runtime foundation.
+> **Current status:** Phase 2 — zero-option `#[command]` macro.
 
 The framework is intentionally limited to Discord chat-input application commands. It does **not** implement prefix commands, message-content parsing, or a hybrid prefix/slash command abstraction.
 
@@ -27,15 +27,42 @@ crates/
 
 The proc-macro crate contains no Discord runtime behavior. Generated code targets public runtime abstractions from `gloam-commands`, which in turn uses Gloamwire's Gateway, REST, and model APIs.
 
-## Target API
+## Current API
 
-The macro surface begins in Phase 2. The intended application API is:
+Phase 2 removes the need to hand-write command descriptors and erased handler adapters for zero-option slash commands:
 
 ```rust,ignore
 use gloam_commands::prelude::*;
 
 struct State;
 
+#[command(description = "Check bot responsiveness")]
+async fn ping(_ctx: Context<State>) -> Result<()> {
+    Ok(())
+}
+
+let framework = Framework::builder(State)
+    .commands(commands![ping])
+    .build()?;
+```
+
+`#[command]` currently:
+
+- requires an `async fn`;
+- requires exactly one `Context<D>` parameter;
+- requires a slash-command description;
+- supports an optional explicit `name = "..."`;
+- validates Discord chat-input command naming and description length rules;
+- preserves the original Rust function;
+- generates the static descriptor and erased adapter used by `commands![...]`.
+
+Typed slash-command parameters are intentionally not part of Phase 2. They are planned for Phase 5 after interaction dispatch and response handling establish the runtime semantics they depend on.
+
+## Planned application API
+
+The eventual managed runtime is intended to build on the same command declaration without changing handler metadata:
+
+```rust,ignore
 #[command(description = "Say hello")]
 async fn hello(
     ctx: Context<State>,
@@ -45,38 +72,14 @@ async fn hello(
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    Framework::builder(State)
-        .commands(commands![hello])
-        .registration(Registration::Global)
-        .run(std::env::var("DISCORD_TOKEN")?)
-        .await
-}
+Framework::builder(State)
+    .commands(commands![hello])
+    .registration(Registration::Global)
+    .run(std::env::var("DISCORD_TOKEN")?)
+    .await?;
 ```
 
-That API is a roadmap target, not yet the Phase 1 feature set.
-
-## Current Phase 1 API
-
-Phase 1 establishes the ownership and registration model used by later generated code:
-
-```rust,ignore
-use gloam_commands::{CommandDescriptor, Context, Framework, SlashCommand};
-
-static PING: CommandDescriptor =
-    CommandDescriptor::new("ping", "Check bot responsiveness");
-
-fn ping_adapter(_ctx: Context<State>) -> gloam_commands::CommandFuture {
-    Box::pin(async { Ok(()) })
-}
-
-let framework = Framework::builder(State)
-    .command(SlashCommand::new(&PING, ping_adapter))
-    .build()?;
-```
-
-Application authors will not need to write descriptors or adapters manually once Phase 2 lands.
+That example describes later roadmap phases; typed options, response helpers, command synchronization, and the managed Gateway runtime are not Phase 2 features.
 
 ## Roadmap
 
