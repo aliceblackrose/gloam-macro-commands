@@ -1,0 +1,16 @@
+[package]
+name = "gloam-commands"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "A slash-command framework for Gloamwire"
+
+[dependencies]
+gloamwire.workspace = true
+gloam-commands-macros.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
