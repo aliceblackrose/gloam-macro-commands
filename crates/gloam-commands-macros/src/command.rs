@@ -1,5 +1,8 @@
+use std::sync::LazyLock;
+
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
+use regex::Regex;
 use syn::{
     Error, FnArg, GenericArgument, Ident, ItemFn, LitStr, PathArguments, Result, ReturnType, Token,
     Type,
@@ -8,6 +11,11 @@ use syn::{
     parse2,
     spanned::Spanned,
 };
+
+static COMMAND_NAME: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^[-_'\p{L}\p{N}\p{sc=Deva}\p{sc=Thai}]{1,32}$")
+        .expect("Discord chat-input command name regex must be valid")
+});
 
 struct CommandArgs {
     name: Option<LitStr>,
@@ -75,8 +83,14 @@ pub(crate) fn expand(attribute: TokenStream, item: TokenStream) -> Result<TokenS
     let state_type = state_type(context_type)?;
     let visibility = &function.vis;
     let helper_suffix = function_name.unraw().to_string();
-    let handler_name = format_ident!("__gloam_handler_{helper_suffix}", span = function_name.span());
-    let factory_name = format_ident!("__gloam_command_{helper_suffix}", span = function_name.span());
+    let handler_name = format_ident!(
+        "__gloam_handler_{helper_suffix}",
+        span = function_name.span()
+    );
+    let factory_name = format_ident!(
+        "__gloam_command_{helper_suffix}",
+        span = function_name.span()
+    );
 
     Ok(quote! {
         #function
@@ -233,11 +247,18 @@ fn state_type(context_type: &Type) -> Result<&Type> {
 }
 
 fn validate_name(name: &LitStr) -> Result<()> {
-    let length = name.value().chars().count();
-    if !(1..=32).contains(&length) {
+    let value = name.value();
+    if !COMMAND_NAME.is_match(&value) {
         return Err(Error::new(
             name.span(),
-            "Discord slash-command names must contain between 1 and 32 characters",
+            "invalid Discord chat-input command name; expected 1-32 characters matching Discord's application-command naming rules",
+        ));
+    }
+
+    if value.to_lowercase() != value {
+        return Err(Error::new(
+            name.span(),
+            "Discord chat-input command names must use lowercase variants when available",
         ));
     }
 
