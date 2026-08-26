@@ -21,7 +21,7 @@ Version 0.1 targets a complete slash-command foundation:
 
 ## Phase 1 — Runtime foundation
 
-**Status:** In progress
+**Status:** Ready to merge
 
 Establish the crate boundaries and runtime abstractions before generated code depends on them.
 
@@ -36,7 +36,7 @@ Establish the crate boundaries and runtime abstractions before generated code de
 - [x] Add deterministic `CommandRegistry<D>` lookup.
 - [x] Reject duplicate command names.
 - [x] Add `Framework<D>` and `FrameworkBuilder<D>`.
-- [ ] Run formatting, tests, Clippy, and documentation checks in CI.
+- [x] Run formatting, tests, Clippy, and documentation checks in CI.
 - [ ] Merge the Phase 1 branch after the foundation is green.
 
 **Exit criteria:** the workspace builds cleanly and exposes stable ownership boundaries for runtime state, contexts, command descriptors, and registration.
