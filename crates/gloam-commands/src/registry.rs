@@ -172,8 +172,8 @@ mod tests {
     use super::CommandRegistry;
     use crate::{
         AutocompleteContext, AutocompleteFuture, AutocompleteHandlerDescriptor,
-        CommandChoiceDescriptor, CommandDescriptor, CommandOptionDescriptor, CommandPolicy, Context,
-        Error, Result, SlashCommand,
+        CommandChoiceDescriptor, CommandDescriptor, CommandOptionDescriptor, CommandPolicy,
+        Context, Error, Result, SlashCommand,
     };
 
     static PING: CommandDescriptor = CommandDescriptor::new("ping", "Check bot responsiveness");
@@ -296,11 +296,8 @@ mod tests {
 
     #[test]
     fn rejects_zero_per_command_concurrency() {
-        let command = SlashCommand::new_with_policy(
-            &PING,
-            handler,
-            CommandPolicy::new().max_concurrency(0),
-        );
+        let command =
+            SlashCommand::new_with_policy(&PING, handler, CommandPolicy::new().max_concurrency(0));
         let mut registry = CommandRegistry::new();
 
         assert!(matches!(
