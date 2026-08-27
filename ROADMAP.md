@@ -210,21 +210,23 @@ Add composable execution policy around slash-command handlers.
 
 ## Phase 11 — Hooks, observability, and 0.1 hardening
 
+**Status:** Complete
+
 Finish the first release with diagnostics and complete examples.
 
-- [ ] Add before-command hooks.
-- [ ] Add after-command hooks.
-- [ ] Add centralized command-error handling.
-- [ ] Add optional `tracing` integration without installing a subscriber.
-- [ ] Ensure interaction tokens and sensitive payload data are never logged.
-- [ ] Add basic command example.
-- [ ] Add typed-option example.
-- [ ] Add grouped-command example.
-- [ ] Add autocomplete example.
-- [ ] Document manual-dispatch integration with existing Gloamwire loops.
-- [ ] Add CI for formatting, tests, Clippy, and rustdoc.
-- [ ] Audit public API documentation.
-- [ ] Publish the 0.1 release checklist.
+- [x] Add before-command hooks.
+- [x] Add after-command hooks.
+- [x] Add centralized command-error handling.
+- [x] Add optional `tracing` integration without installing a subscriber.
+- [x] Ensure interaction tokens and sensitive payload data are never logged.
+- [x] Add basic command example.
+- [x] Add typed-option example.
+- [x] Add grouped-command example.
+- [x] Add autocomplete example.
+- [x] Document manual-dispatch integration with existing Gloamwire loops.
+- [x] Add CI for formatting, tests, Clippy, and rustdoc.
+- [x] Audit public API documentation.
+- [x] Publish the 0.1 release checklist.
 
 **Exit criteria:** the supported slash-command feature set is documented, tested, observable, and ready for a 0.1 release.
 

@@ -25,7 +25,10 @@ jobs:
         run: cargo fmt --all --check
 
       - name: Run tests
-        run: cargo test --workspace --all-features
+        run: cargo test --workspace --all-targets --all-features
+
+      - name: Check examples
+        run: cargo check --workspace --examples --all-features
 
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
@@ -33,4 +36,4 @@ jobs:
       - name: Build documentation
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo doc --workspace --no-deps
+        run: cargo doc --workspace --no-deps --all-features
