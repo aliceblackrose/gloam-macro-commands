@@ -97,7 +97,7 @@ pub(crate) fn expand(input: TokenStream) -> Result<TokenStream> {
 
     Ok(quote! {
         impl ::gloam_commands::CommandOption for #enum_ident {
-            const KIND: ::gloamwire::model::ApplicationCommandOptionType = #option_kind;
+            const KIND: ::gloam_commands::__private::ApplicationCommandOptionType = #option_kind;
 
             fn extract(
                 options: &::gloam_commands::CommandOptions<'_>,
@@ -124,7 +124,10 @@ enum ChoiceKind {
 
 fn parse_variants(data: &DataEnum) -> Result<Vec<VariantChoice>> {
     if data.variants.is_empty() {
-        return Err(Error::new_spanned(data.enum_token, "command-choice enums cannot be empty"));
+        return Err(Error::new_spanned(
+            data.enum_token,
+            "command-choice enums cannot be empty",
+        ));
     }
     if data.variants.len() > MAX_CHOICES {
         return Err(Error::new_spanned(
@@ -172,7 +175,10 @@ fn choice_attribute(attributes: &[Attribute]) -> Result<Option<&Attribute>> {
             continue;
         }
         if found.replace(attribute).is_some() {
-            return Err(Error::new_spanned(attribute, "duplicate `#[choice(...)]` attribute"));
+            return Err(Error::new_spanned(
+                attribute,
+                "duplicate `#[choice(...)]` attribute",
+            ));
         }
     }
     Ok(found)
@@ -286,8 +292,8 @@ fn value_key(choice: &VariantChoice, kind: ChoiceKind) -> Result<String> {
         (ChoiceKind::String, None) => choice.variant.unraw().to_string(),
         (ChoiceKind::String, Some(ParsedValue::String(value))) => value.value(),
         (ChoiceKind::Integer, Some(ParsedValue::Integer(value))) => format!("i:{value}"),
-        (ChoiceKind::Number, Some(ParsedValue::Integer(value))) => format!("n:{}", *value as f64),
-        (ChoiceKind::Number, Some(ParsedValue::Number(value))) => format!("n:{value}"),
+        (ChoiceKind::Number, Some(ParsedValue::Integer(value))) => number_key(*value as f64),
+        (ChoiceKind::Number, Some(ParsedValue::Number(value))) => number_key(*value),
         _ => {
             return Err(Error::new(
                 choice.variant.span(),
@@ -295,6 +301,14 @@ fn value_key(choice: &VariantChoice, kind: ChoiceKind) -> Result<String> {
             ));
         }
     })
+}
+
+fn number_key(value: f64) -> String {
+    if value == 0.0 {
+        "n:0".to_owned()
+    } else {
+        format!("n:{value}")
+    }
 }
 
 fn descriptor_tokens(choice: &VariantChoice, kind: ChoiceKind) -> Result<TokenStream> {
@@ -352,7 +366,7 @@ fn extraction_tokens(choices: &[VariantChoice], kind: ChoiceKind) -> TokenStream
         ChoiceKind::Integer => {
             let branches = choices.iter().map(|choice| {
                 let variant = &choice.variant;
-                let Some(ParsedValue::Integer(value)) = choice.value else {
+                let Some(ParsedValue::Integer(value)) = choice.value.as_ref() else {
                     unreachable!("choice kind was validated");
                 };
                 quote! { #value => ::std::result::Result::Ok(Self::#variant), }
@@ -390,8 +404,14 @@ fn extraction_tokens(choices: &[VariantChoice], kind: ChoiceKind) -> TokenStream
 
 fn option_kind_tokens(kind: ChoiceKind) -> TokenStream {
     match kind {
-        ChoiceKind::String => quote! { ::gloamwire::model::ApplicationCommandOptionType::STRING },
-        ChoiceKind::Integer => quote! { ::gloamwire::model::ApplicationCommandOptionType::INTEGER },
-        ChoiceKind::Number => quote! { ::gloamwire::model::ApplicationCommandOptionType::NUMBER },
+        ChoiceKind::String => quote! {
+            <::std::string::String as ::gloam_commands::CommandOption>::KIND
+        },
+        ChoiceKind::Integer => quote! {
+            <i64 as ::gloam_commands::CommandOption>::KIND
+        },
+        ChoiceKind::Number => quote! {
+            <f64 as ::gloam_commands::CommandOption>::KIND
+        },
     }
 }
