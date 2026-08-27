@@ -83,18 +83,20 @@ Connect Gloamwire's Gateway interaction stream to registered handlers.
 
 ## Phase 4 — Interaction responses
 
+**Status:** Complete
+
 Add ergonomic response APIs while preserving Discord acknowledgement rules.
 
-- [ ] Track interaction acknowledgement state.
-- [ ] Add `ctx.reply(...)`.
-- [ ] Add ephemeral replies.
-- [ ] Add `ctx.defer()` and ephemeral deferral.
-- [ ] Add original-response editing.
-- [ ] Add original-response deletion.
-- [ ] Add followup messages.
-- [ ] Automatically use followups after an initial response when appropriate.
-- [ ] Return explicit errors for invalid acknowledgement transitions.
-- [ ] Add response-state concurrency tests.
+- [x] Track interaction acknowledgement state.
+- [x] Add `ctx.reply(...)`.
+- [x] Add ephemeral replies.
+- [x] Add `ctx.defer()` and ephemeral deferral.
+- [x] Add original-response editing.
+- [x] Add original-response deletion.
+- [x] Add followup messages.
+- [x] Automatically use followups after an initial response when appropriate.
+- [x] Return explicit errors for invalid acknowledgement transitions.
+- [x] Add response-state concurrency tests.
 
 **Exit criteria:** handlers can safely respond, defer, edit, delete, and follow up without manually calling raw interaction endpoints.
 
