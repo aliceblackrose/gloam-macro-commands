@@ -88,7 +88,9 @@ pub enum Error {
     },
 
     /// A command cooldown could not identify the invoking user.
-    #[error("slash command `{0}` cannot apply its cooldown because the invoking user is unavailable")]
+    #[error(
+        "slash command `{0}` cannot apply its cooldown because the invoking user is unavailable"
+    )]
     CommandUserUnavailable(String),
 
     /// A per-user command cooldown is still active.
