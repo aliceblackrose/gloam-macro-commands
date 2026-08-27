@@ -2,7 +2,7 @@
 
 A focused Discord **slash-command framework** for [Gloamwire](https://github.com/cybellereaper/gloamwire), written for Rust 1.98 and Edition 2024.
 
-> **Current status:** Phase 4 — interaction responses.
+> **Current status:** Phase 5 — typed slash-command options.
 
 The framework is intentionally limited to Discord chat-input application commands. It does **not** implement prefix commands, message-content parsing, or a hybrid prefix/slash command abstraction.
 
@@ -23,7 +23,7 @@ The framework is intentionally limited to Discord chat-input application command
 
 ```text
 crates/
-├── gloam-commands/         # runtime, context, registry, dispatch, responses
+├── gloam-commands/         # runtime, context, registry, dispatch, responses, options
 └── gloam-commands-macros/  # procedural macro generation only
 ```
 
@@ -31,29 +31,72 @@ The proc-macro crate contains no Discord runtime behavior. Generated code target
 
 ## Current API
 
-Zero-option slash commands can be declared with `#[command]`, respond through `Context<D>`, and execute through the managed Gloamwire shard runtime:
+Typed slash commands can be declared with `#[command]`, respond through `Context<D>`, and execute through the managed Gloamwire shard runtime:
 
 ```rust,ignore
 use gloam_commands::prelude::*;
 
 struct State;
 
-#[command(description = "Check bot responsiveness")]
-async fn ping(ctx: Context<State>) -> Result<()> {
-    ctx.reply("Pong!").await?;
+#[command(description = "Say hello")]
+async fn hello(
+    ctx: Context<State>,
+    #[description = "Person to greet"]
+    #[min_length = 1]
+    #[max_length = 64]
+    name: String,
+    #[description = "Reply privately"] private: Option<bool>,
+) -> Result<()> {
+    let greeting = format!("Hello, {name}!");
+
+    if private.unwrap_or(false) {
+        ctx.reply_ephemeral(greeting).await?;
+    } else {
+        ctx.reply(greeting).await?;
+    }
+
     Ok(())
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let framework = Framework::builder(State)
-        .commands(commands![ping])
+        .commands(commands![hello])
         .max_concurrent_commands(64)
         .build()?;
 
-    framework.run(std::env::var("DISCORD_TOKEN").unwrap()).await
+    framework
+        .run(std::env::var("DISCORD_TOKEN").expect("DISCORD_TOKEN"))
+        .await
 }
 ```
+
+### Typed command options
+
+The handler signature is the single source of truth for both the static Discord option schema and runtime extraction. The macro generates both from the same parsed parameter list, so registration metadata and invocation extraction cannot be authored independently.
+
+Supported parameter types are:
+
+- `String` → Discord String;
+- `bool` → Boolean;
+- `i64` → Integer;
+- `f64` → Number;
+- Gloamwire `UserId` → User;
+- Gloamwire `ChannelId` → Channel;
+- Gloamwire `RoleId` → Role;
+- Gloamwire `AttachmentId` → Attachment;
+- `Option<T>` → optional form of any supported `T`.
+
+Every command option requires `#[description = "..."]`. Required parameters must precede optional `Option<T>` parameters, matching Discord's application-command schema rules.
+
+Supported constraints are:
+
+- `#[min = ...]` and `#[max = ...]` for `i64` and `f64`;
+- `#[min_length = ...]` and `#[max_length = ...]` for `String`.
+
+The macro validates Discord's supported ranges, rejects incompatible constraints, rejects unsupported parameter types, enforces the 25-option limit, and reports errors at the relevant source span. Framework parameter attributes are removed from the preserved original Rust function after they are consumed by the macro.
+
+Dispatch parses application-command data once through Gloamwire. `Context<D>` retains that parsed data, and the generated adapter extracts each typed parameter before calling the user's async function. Missing required options and malformed option values surface as framework errors rather than being silently defaulted.
 
 ### Interaction responses
 
@@ -70,6 +113,8 @@ Available helpers:
 
 A deferral fixes the visibility of the original response. Completing a public deferral with `reply_ephemeral(...)`, or an ephemeral deferral with `reply(...)`, returns a framework error rather than silently changing semantics. State advances only after a successful Gloamwire REST call, so failed acknowledgements remain retryable.
 
+### Dispatch and execution
+
 The managed runtime:
 
 - uses Gloamwire's recommended `ShardManager` configuration;
@@ -85,41 +130,29 @@ Applications that already own a Gloamwire Gateway loop can call `Framework::disp
 `#[command]` currently:
 
 - requires an `async fn`;
-- requires exactly one `Context<D>` parameter;
+- requires `Context<D>` as the first parameter;
 - requires a `Result<()>` return type;
 - requires a slash-command description;
 - supports an optional explicit `name = "..."`;
-- validates Discord chat-input command naming and description length rules;
+- accepts supported typed slash-command parameters after the context;
+- validates command names, descriptions, parameter descriptions, option ordering, option count, supported types, and supported constraints;
 - preserves the original Rust function;
-- generates the static descriptor and erased adapter used by `commands![...]`.
+- generates the static descriptor and erased extraction/handler adapter used by `commands![...]`.
 
-Command synchronization is not implemented yet. Until Phase 6, Discord application commands must already be registered externally for managed Gateway dispatch to receive invocations.
+Command synchronization is not implemented yet. Until Phase 6, Discord application commands must be registered externally for managed Gateway dispatch to receive invocations. Phase 6 will convert the generated descriptors into Gloamwire application-command payloads and bulk-synchronize them with Discord.
 
-Typed slash-command parameters are also not implemented yet. They are planned for Phase 5 now that interaction dispatch and response semantics are established.
+## Planned synchronization API
 
-## Planned application API
-
-Later phases will extend the same command declaration with typed options and generated command synchronization:
+Phase 6 will extend framework configuration with explicit registration policy while reusing the descriptors already generated in Phase 5:
 
 ```rust,ignore
-#[command(description = "Say hello")]
-async fn hello(
-    ctx: Context<State>,
-    #[description = "Person to greet"] name: String,
-) -> Result<()> {
-    ctx.reply(format!("Hello, {name}!" )).await?;
-    Ok(())
-}
-
 let framework = Framework::builder(State)
     .commands(commands![hello])
     .registration(Registration::Global)
     .build()?;
-
-framework.run(std::env::var("DISCORD_TOKEN")?).await?;
 ```
 
-That example describes later roadmap phases; typed options and command synchronization are not Phase 4 features.
+Registration remains explicit and deterministic; the framework will use Gloamwire's existing application-command REST APIs rather than adding parallel HTTP behavior.
 
 ## Roadmap
 
