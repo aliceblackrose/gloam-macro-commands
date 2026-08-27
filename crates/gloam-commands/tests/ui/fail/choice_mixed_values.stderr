@@ -1,0 +1,5 @@
+error: command-choice enum values must all use the same scalar kind; omitted values are string choices
+ --> tests/ui/fail/choice_mixed_values.rs:6:5
+  |
+6 |     Text,
+  |     ^^^^
