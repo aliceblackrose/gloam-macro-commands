@@ -12,6 +12,7 @@ mod dispatch;
 mod error;
 mod framework;
 mod lifecycle;
+mod observability;
 mod options;
 mod policy;
 mod registration;
