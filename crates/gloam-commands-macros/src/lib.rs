@@ -2,10 +2,19 @@
 
 use proc_macro::TokenStream;
 
+mod autocomplete;
 mod choice;
 mod command;
 mod commands;
 mod group;
+
+/// Declares a Discord application-command autocomplete handler.
+#[proc_macro_attribute]
+pub fn autocomplete(attribute: TokenStream, item: TokenStream) -> TokenStream {
+    autocomplete::expand(attribute.into(), item.into())
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
 
 /// Declares a typed Discord command-option choice enum.
 #[proc_macro_derive(CommandChoice, attributes(choice))]
