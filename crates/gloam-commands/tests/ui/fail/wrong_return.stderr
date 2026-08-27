@@ -1,0 +1,5 @@
+error: slash commands must return `Result<()>`
+ --> tests/ui/fail/wrong_return.rs:8:40
+  |
+8 | async fn ping(_ctx: Context<State>) -> () {
+  |                                        ^^
