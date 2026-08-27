@@ -6,21 +6,25 @@ use gloamwire::model::{
 
 use crate::{Error, Result};
 
-/// Submitted options for one Discord chat-input command invocation.
+/// Submitted scalar options for one resolved Discord chat-input command path.
 ///
 /// Generated command adapters use this view to extract typed Rust parameters
-/// from the command data that dispatch already parsed.
+/// from the leaf option scope that dispatch already resolved.
 pub struct CommandOptions<'a> {
     options: &'a [ApplicationCommandInteractionDataOption],
 }
 
 impl<'a> CommandOptions<'a> {
-    /// Creates an option view over parsed application-command data.
+    /// Creates an option view over top-level parsed application-command data.
     #[must_use]
     pub fn new(data: &'a ApplicationCommandInteractionData) -> Self {
-        Self {
-            options: &data.options,
-        }
+        Self::from_slice(&data.options)
+    }
+
+    /// Creates an option view over an already-resolved leaf option slice.
+    #[must_use]
+    pub const fn from_slice(options: &'a [ApplicationCommandInteractionDataOption]) -> Self {
+        Self { options }
     }
 
     /// Returns a submitted option by its registered name.
@@ -211,6 +215,18 @@ mod tests {
         assert!(bool::extract(&options, "enabled").expect("bool"));
         assert_eq!(i64::extract(&options, "count").expect("integer"), 42);
         assert_eq!(f64::extract(&options, "ratio").expect("number"), 1.5);
+    }
+
+    #[test]
+    fn extracts_from_resolved_nested_scope() {
+        let nested = vec![option(
+            "count",
+            ApplicationCommandOptionType::INTEGER,
+            ApplicationCommandInteractionValue::Integer(7),
+        )];
+        let options = CommandOptions::from_slice(&nested);
+
+        assert_eq!(i64::extract(&options, "count").expect("nested integer"), 7);
     }
 
     #[test]
