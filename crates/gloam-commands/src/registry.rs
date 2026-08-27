@@ -59,12 +59,8 @@ impl<D> Default for CommandRegistry<D> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
-    use gloamwire::RestClient;
-
     use super::CommandRegistry;
-    use crate::{CommandDescriptor, Context, Result, Runtime, SlashCommand};
+    use crate::{CommandDescriptor, Context, Result, SlashCommand};
 
     static PING: CommandDescriptor = CommandDescriptor::new("ping", "Check bot responsiveness");
 
@@ -93,12 +89,5 @@ mod tests {
         );
         assert!(registry.get("missing").is_none());
         Ok(())
-    }
-
-    #[allow(dead_code)]
-    fn context_constructor_stays_framework_owned(rest: RestClient) {
-        let runtime = Arc::new(Runtime::new(rest, ()));
-        let context = Context::new(runtime, "ping");
-        assert_eq!(context.command_name(), "ping");
     }
 }
