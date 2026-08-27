@@ -602,16 +602,20 @@ fn parse_integer_bound(expression: &Expr) -> Result<i64> {
 fn parse_number_bound(expression: &Expr) -> Result<f64> {
     let (negative, literal) = signed_literal(expression)?;
     let magnitude = match literal {
-        Lit::Float(literal) => literal.base10_parse::<f64>(),
-        Lit::Int(literal) => literal.base10_digits().parse::<f64>(),
+        Lit::Float(literal) => literal
+            .base10_parse::<f64>()
+            .map_err(|_| Error::new_spanned(expression, "invalid number option bound"))?,
+        Lit::Int(literal) => literal
+            .base10_digits()
+            .parse::<f64>()
+            .map_err(|_| Error::new_spanned(expression, "invalid number option bound"))?,
         _ => {
             return Err(Error::new_spanned(
                 expression,
                 "number option bounds require numeric literals",
             ));
         }
-    }
-    .map_err(|_| Error::new_spanned(expression, "invalid number option bound"))?;
+    };
     let value = if negative { -magnitude } else { magnitude };
     if !value.is_finite() || !(MIN_NUMBER_VALUE..=MAX_NUMBER_VALUE).contains(&value) {
         return Err(Error::new_spanned(
