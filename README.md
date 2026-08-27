@@ -2,7 +2,7 @@
 
 A focused Discord **slash-command framework** for [Gloamwire](https://github.com/cybellereaper/gloamwire), written for Rust 1.98 and Edition 2024.
 
-> **Current status:** Phase 2 — zero-option `#[command]` macro.
+> **Current status:** Phase 3 — interaction dispatch and managed runtime.
 
 The framework is intentionally limited to Discord chat-input application commands. It does **not** implement prefix commands, message-content parsing, or a hybrid prefix/slash command abstraction.
 
@@ -16,6 +16,7 @@ The framework is intentionally limited to Discord chat-input application command
 - Keep registration explicit and deterministic.
 - Produce useful compile-time diagnostics for invalid command signatures.
 - Keep command execution from blocking Gateway polling.
+- Bound framework-owned command tasks instead of accumulating unbounded scheduler waiters.
 
 ## Workspace
 
@@ -25,11 +26,11 @@ crates/
 └── gloam-commands-macros/  # procedural macro generation only
 ```
 
-The proc-macro crate contains no Discord runtime behavior. Generated code targets public runtime abstractions from `gloam-commands`, which in turn uses Gloamwire's Gateway, REST, and model APIs.
+The proc-macro crate contains no Discord runtime behavior. Generated code targets public runtime abstractions from `gloam-commands`, which in turn uses Gloamwire's Gateway, REST, sharding, and model APIs.
 
 ## Current API
 
-Phase 2 removes the need to hand-write command descriptors and erased handler adapters for zero-option slash commands:
+Zero-option slash commands can be declared with `#[command]` and executed through the managed Gloamwire shard runtime:
 
 ```rust,ignore
 use gloam_commands::prelude::*;
@@ -37,30 +38,52 @@ use gloam_commands::prelude::*;
 struct State;
 
 #[command(description = "Check bot responsiveness")]
-async fn ping(_ctx: Context<State>) -> Result<()> {
+async fn ping(ctx: Context<State>) -> Result<()> {
+    println!("interaction {}", ctx.interaction().id.get());
     Ok(())
 }
 
-let framework = Framework::builder(State)
-    .commands(commands![ping])
-    .build()?;
+#[tokio::main]
+async fn main() -> Result<()> {
+    let framework = Framework::builder(State)
+        .commands(commands![ping])
+        .max_concurrent_commands(64)
+        .build()?;
+
+    framework.run(std::env::var("DISCORD_TOKEN").unwrap()).await
+}
 ```
+
+The managed runtime:
+
+- uses Gloamwire's recommended `ShardManager` configuration;
+- requests no Gateway intents because application-command interactions do not require one;
+- parses only `INTERACTION_CREATE` application-command payloads;
+- routes only chat-input commands registered in the local command registry;
+- preserves the receiving `ShardId` in `Context<D>`;
+- reserves an execution slot before spawning a handler, so command tasks remain bounded;
+- continues polling the Gateway while command handlers execute.
+
+Applications that already own a Gloamwire Gateway loop can call `Framework::dispatch(...)` or `Framework::dispatch_shard(...)` instead. Manual dispatch returns `DispatchOutcome`, including `Ignored`, `Unregistered`, `AtCapacity`, and a `Spawned(CommandTask)` handle.
 
 `#[command]` currently:
 
 - requires an `async fn`;
 - requires exactly one `Context<D>` parameter;
+- requires a `Result<()>` return type;
 - requires a slash-command description;
 - supports an optional explicit `name = "..."`;
 - validates Discord chat-input command naming and description length rules;
 - preserves the original Rust function;
 - generates the static descriptor and erased adapter used by `commands![...]`.
 
-Typed slash-command parameters are intentionally not part of Phase 2. They are planned for Phase 5 after interaction dispatch and response handling establish the runtime semantics they depend on.
+Command synchronization is not implemented yet. Until Phase 6, Discord application commands must already be registered externally for managed Gateway dispatch to receive invocations.
+
+Typed slash-command parameters are also not implemented yet. They are planned for Phase 5 after Phase 4 establishes interaction response semantics.
 
 ## Planned application API
 
-The eventual managed runtime is intended to build on the same command declaration without changing handler metadata:
+Later phases will extend the same command declaration with typed options, responses, and generated command synchronization:
 
 ```rust,ignore
 #[command(description = "Say hello")]
@@ -72,14 +95,15 @@ async fn hello(
     Ok(())
 }
 
-Framework::builder(State)
+let framework = Framework::builder(State)
     .commands(commands![hello])
     .registration(Registration::Global)
-    .run(std::env::var("DISCORD_TOKEN")?)
-    .await?;
+    .build()?;
+
+framework.run(std::env::var("DISCORD_TOKEN")?).await?;
 ```
 
-That example describes later roadmap phases; typed options, response helpers, command synchronization, and the managed Gateway runtime are not Phase 2 features.
+That example describes later roadmap phases; typed options, response helpers, and command synchronization are not Phase 3 features.
 
 ## Roadmap
 
