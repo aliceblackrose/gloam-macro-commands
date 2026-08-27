@@ -7,8 +7,10 @@ use gloamwire::{
     model::ApplicationCommandNumericValue,
 };
 
+type OptionValues = (String, bool, i64, f64, Option<String>);
+
 struct State {
-    captured: Mutex<Option<(String, bool, i64, f64, Option<String>)>>,
+    captured: Mutex<Option<OptionValues>>,
 }
 
 #[command(description = "Capture typed slash-command options")]
