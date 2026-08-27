@@ -21,9 +21,9 @@ use tokio::{
 
 use crate::{
     AutocompleteChoice, AutocompleteChoiceValue, AutocompleteContext, AutocompleteHandler,
-    CommandErrorHandler, CommandFuture, CommandHandler, CommandHook, CommandPolicy, CommandRegistry,
-    CommandTask, Context, DispatchOutcome, Error, Registration, Result, Runtime, SlashCommand,
-    observability,
+    CommandErrorHandler, CommandFuture, CommandHandler, CommandHook, CommandPolicy,
+    CommandRegistry, CommandTask, Context, DispatchOutcome, Error, Registration, Result, Runtime,
+    SlashCommand, observability,
 };
 
 /// Default upper bound for simultaneously executing command handlers.
