@@ -1,0 +1,5 @@
+error: `max_concurrency` must be greater than zero
+ --> tests/ui/fail/policy_zero_concurrency.rs:7:66
+  |
+7 | #[command(description = "Invalid concurrency", max_concurrency = 0)]
+  |                                                                  ^
