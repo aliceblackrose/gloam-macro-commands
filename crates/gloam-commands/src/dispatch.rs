@@ -39,10 +39,7 @@ pub struct CommandTask {
 }
 
 impl CommandTask {
-    pub(crate) const fn new(
-        command_name: &'static str,
-        handle: JoinHandle<Result<()>>,
-    ) -> Self {
+    pub(crate) const fn new(command_name: &'static str, handle: JoinHandle<Result<()>>) -> Self {
         Self {
             command_name,
             handle,
