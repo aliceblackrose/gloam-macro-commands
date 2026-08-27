@@ -173,8 +173,8 @@ fn create_choice(descriptor: &CommandChoiceDescriptor) -> ApplicationCommandOpti
 #[cfg(test)]
 mod tests {
     use gloamwire::model::{
-        ApplicationCommandChoiceValue, ApplicationCommandNumericValue, ApplicationCommandOptionType,
-        GuildId,
+        ApplicationCommandChoiceValue, ApplicationCommandNumericValue,
+        ApplicationCommandOptionType, GuildId,
     };
 
     use crate::{
