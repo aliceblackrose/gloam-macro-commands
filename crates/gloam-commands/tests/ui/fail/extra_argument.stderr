@@ -1,5 +1,0 @@
-error: Phase 2 slash commands accept exactly one parameter: `Context<D>`; typed command options are added in Phase 5
- --> tests/ui/fail/extra_argument.rs:8:15
-  |
-8 | async fn echo(_ctx: Context<State>, value: String) -> Result<()> {
-  |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
