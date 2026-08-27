@@ -45,6 +45,13 @@ pub enum Error {
         expected: &'static str,
     },
 
+    /// A submitted slash-command choice did not match any generated enum variant.
+    #[error("slash-command option `{name}` contains an unknown choice value")]
+    InvalidChoice {
+        /// Option name generated from the handler parameter.
+        name: &'static str,
+    },
+
     /// An operation required an acknowledgement, but the interaction is still pending.
     #[error("interaction has not been acknowledged")]
     InteractionNotAcknowledged,
