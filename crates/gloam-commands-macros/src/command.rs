@@ -143,10 +143,7 @@ impl Parse for CommandArgs {
                 } else if key == "max_concurrency" {
                     let value = input.parse::<LitInt>()?;
                     let limit = value.base10_parse::<usize>().map_err(|_| {
-                        Error::new(
-                            value.span(),
-                            "`max_concurrency` must be a positive integer",
-                        )
+                        Error::new(value.span(), "`max_concurrency` must be a positive integer")
                     })?;
                     if limit == 0 {
                         return Err(Error::new(
@@ -317,8 +314,8 @@ pub(crate) fn expand(attribute: TokenStream, item: TokenStream) -> Result<TokenS
     validate_signature(&function)?;
 
     let function_name = function.sig.ident.clone();
-    let command_name =
-        name.unwrap_or_else(|| LitStr::new(&function_name.unraw().to_string(), function_name.span()));
+    let command_name = name
+        .unwrap_or_else(|| LitStr::new(&function_name.unraw().to_string(), function_name.span()));
     let description = description.ok_or_else(|| {
         Error::new(
             function_name.span(),
@@ -407,7 +404,8 @@ pub(crate) fn expand(attribute: TokenStream, item: TokenStream) -> Result<TokenS
         let adapter = check_adapter_path(check);
         let check_name = LitStr::new(
             &path_display(check),
-            check.segments
+            check
+                .segments
                 .last()
                 .expect("check paths are validated as non-empty")
                 .ident
