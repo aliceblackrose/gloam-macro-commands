@@ -37,7 +37,11 @@ impl State {
 fn handler(ctx: Context<State>) -> gloam_commands::CommandFuture {
     Box::pin(async move {
         ctx.data().calls.fetch_add(1, Ordering::SeqCst);
-        ctx.data().order.lock().expect("order mutex").push("handler");
+        ctx.data()
+            .order
+            .lock()
+            .expect("order mutex")
+            .push("handler");
         Ok(())
     })
 }
@@ -78,7 +82,12 @@ async fn evaluates_custom_checks_in_declaration_order_before_handler() -> Result
         .await?;
 
     assert_eq!(
-        framework.data().order.lock().expect("order mutex").as_slice(),
+        framework
+            .data()
+            .order
+            .lock()
+            .expect("order mutex")
+            .as_slice(),
         ["first", "second", "handler"]
     );
     assert_eq!(framework.data().calls.load(Ordering::SeqCst), 1);
@@ -129,12 +138,7 @@ async fn enforces_guild_only_contexts() -> Result<()> {
 
     spawned(framework.dispatch(
         &rest,
-        &guild_event(
-            "policy",
-            10,
-            Permissions::empty(),
-            Permissions::empty(),
-        ),
+        &guild_event("policy", 10, Permissions::empty(), Permissions::empty()),
     )?)
     .join()
     .await?;
@@ -165,16 +169,14 @@ async fn enforces_member_and_application_permissions() -> Result<()> {
     .join()
     .await
     .expect_err("member permission should be required");
-    assert!(matches!(member_error, Error::MissingMemberPermissions { .. }));
+    assert!(matches!(
+        member_error,
+        Error::MissingMemberPermissions { .. }
+    ));
 
     let bot_error = spawned(framework.dispatch(
         &rest,
-        &guild_event(
-            "policy",
-            10,
-            Permissions::BAN_MEMBERS,
-            Permissions::empty(),
-        ),
+        &guild_event("policy", 10, Permissions::BAN_MEMBERS, Permissions::empty()),
     )?)
     .join()
     .await
