@@ -307,7 +307,10 @@ mod tests {
         drop(first);
 
         assert_eq!(
-            second.await.expect("reply planner task").expect("second reply"),
+            second
+                .await
+                .expect("reply planner task")
+                .expect("second reply"),
             ReplyAction::Followup { ephemeral: false }
         );
     }
