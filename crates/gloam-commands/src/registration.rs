@@ -59,7 +59,11 @@ fn create_command<D>(command: &SlashCommand<D>) -> CreateApplicationCommand {
     let descriptor = command.descriptor();
     let mut create = CreateApplicationCommand::chat_input(descriptor.name, descriptor.description);
     create.options = if command.is_leaf() {
-        descriptor.options.iter().map(create_scalar_option).collect()
+        descriptor
+            .options
+            .iter()
+            .map(create_scalar_option)
+            .collect()
     } else {
         command.children().iter().map(create_child_option).collect()
     };
@@ -249,7 +253,10 @@ mod tests {
 
         assert_eq!(admin.options.len(), 2);
         assert_eq!(admin.options[0].name, "ban");
-        assert_eq!(admin.options[0].kind, ApplicationCommandOptionType::SUB_COMMAND);
+        assert_eq!(
+            admin.options[0].kind,
+            ApplicationCommandOptionType::SUB_COMMAND
+        );
         assert_eq!(admin.options[0].required, None);
         assert_eq!(admin.options[1].name, "config");
         assert_eq!(
