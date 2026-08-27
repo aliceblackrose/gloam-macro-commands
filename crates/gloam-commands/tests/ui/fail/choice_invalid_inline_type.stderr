@@ -1,0 +1,5 @@
+error: Discord choices are only supported for `String`, `i64`, and `f64` options
+ --> tests/ui/fail/choice_invalid_inline_type.rs:9:21
+  |
+9 |     #[choice(name = "Enabled", value = true)]
+  |                     ^^^^^^^^^
