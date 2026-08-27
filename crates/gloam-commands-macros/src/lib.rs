@@ -2,9 +2,18 @@
 
 use proc_macro::TokenStream;
 
+mod choice;
 mod command;
 mod commands;
 mod group;
+
+/// Declares a typed Discord command-option choice enum.
+#[proc_macro_derive(CommandChoice, attributes(choice))]
+pub fn command_choice(input: TokenStream) -> TokenStream {
+    choice::expand(input.into())
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
 
 /// Declares a Discord chat-input slash command.
 #[proc_macro_attribute]

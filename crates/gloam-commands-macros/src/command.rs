@@ -1,4 +1,4 @@
-use std::{mem, sync::LazyLock};
+use std::{collections::HashSet, mem, sync::LazyLock};
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -17,11 +17,13 @@ static COMMAND_NAME: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 const MAX_COMMAND_OPTIONS: usize = 25;
+const MAX_CHOICES: usize = 25;
 const MIN_INTEGER_VALUE: i64 = -9_007_199_254_740_991;
 const MAX_INTEGER_VALUE: i64 = 9_007_199_254_740_991;
 const MIN_NUMBER_VALUE: f64 = -9_007_199_254_740_992.0;
 const MAX_NUMBER_VALUE: f64 = 9_007_199_254_740_992.0;
 const MAX_STRING_LENGTH: u32 = 6_000;
+const MAX_CHOICE_STRING_LENGTH: usize = 100;
 
 struct CommandArgs {
     name: Option<LitStr>,
@@ -81,16 +83,76 @@ enum NumericBound {
     Number(f64),
 }
 
+#[derive(Clone)]
+enum InlineChoiceValue {
+    String(LitStr),
+    Integer(i64),
+    Number(f64),
+}
+
+#[derive(Clone)]
+struct InlineChoice {
+    name: LitStr,
+    value: InlineChoiceValue,
+}
+
+enum ChoiceSource {
+    None,
+    Inline(Vec<InlineChoice>),
+    Typed,
+}
+
 struct OptionParameter {
     ident: Ident,
     ty: Type,
     name: LitStr,
     description: LitStr,
     required: bool,
+    choices: ChoiceSource,
     min: Option<NumericBound>,
     max: Option<NumericBound>,
     min_length: Option<u32>,
     max_length: Option<u32>,
+}
+
+struct InlineChoiceArgs {
+    name: Option<LitStr>,
+    value: Option<Expr>,
+}
+
+impl Parse for InlineChoiceArgs {
+    fn parse(input: ParseStream<'_>) -> Result<Self> {
+        let mut name = None;
+        let mut value = None;
+
+        while !input.is_empty() {
+            let key = input.call(Ident::parse_any)?;
+            input.parse::<Token![=]>()?;
+            if key == "name" {
+                let literal = input.parse::<LitStr>()?;
+                if name.replace(literal).is_some() {
+                    return Err(Error::new(key.span(), "duplicate `name` argument"));
+                }
+            } else if key == "value" {
+                let expression = input.parse::<Expr>()?;
+                if value.replace(expression).is_some() {
+                    return Err(Error::new(key.span(), "duplicate `value` argument"));
+                }
+            } else {
+                return Err(Error::new(
+                    key.span(),
+                    "unsupported choice argument; expected `name` or `value`",
+                ));
+            }
+
+            if input.is_empty() {
+                break;
+            }
+            input.parse::<Token![,]>()?;
+        }
+
+        Ok(Self { name, value })
+    }
 }
 
 #[derive(Default)]
@@ -100,6 +162,8 @@ struct OptionAttributes {
     max: Option<Expr>,
     min_length: Option<Expr>,
     max_length: Option<Expr>,
+    typed_choice: bool,
+    inline_choices: Vec<InlineChoiceArgs>,
 }
 
 pub(crate) fn expand(attribute: TokenStream, item: TokenStream) -> Result<TokenStream> {
@@ -281,7 +345,6 @@ fn option_parameter(argument: &mut FnArg) -> Result<OptionParameter> {
     validate_name(&name)?;
 
     let ty = argument.ty.as_ref().clone();
-    let (kind, required) = option_type(&ty)?;
     let attributes = take_option_attributes(&mut argument.attrs)?;
     let description = attributes.description.ok_or_else(|| {
         Error::new(
@@ -291,6 +354,42 @@ fn option_parameter(argument: &mut FnArg) -> Result<OptionParameter> {
     })?;
     validate_description(&description)?;
 
+    if attributes.typed_choice && !attributes.inline_choices.is_empty() {
+        return Err(Error::new(
+            ident.span(),
+            "a typed `#[choice]` option cannot also declare inline choices",
+        ));
+    }
+
+    if attributes.typed_choice {
+        let required = validate_typed_choice_type(&ty)?;
+        if attributes.min.is_some()
+            || attributes.max.is_some()
+            || attributes.min_length.is_some()
+            || attributes.max_length.is_some()
+        {
+            return Err(Error::new(
+                ident.span(),
+                "typed `CommandChoice` options cannot declare scalar min/max constraints",
+            ));
+        }
+
+        return Ok(OptionParameter {
+            ident,
+            ty,
+            name,
+            description,
+            required,
+            choices: ChoiceSource::Typed,
+            min: None,
+            max: None,
+            min_length: None,
+            max_length: None,
+        });
+    }
+
+    let (kind, required) = option_type(&ty)?;
+    let choices = parse_inline_choices(kind, attributes.inline_choices)?;
     let (min, max) = numeric_bounds(kind, attributes.min.as_ref(), attributes.max.as_ref())?;
     let (min_length, max_length) = string_bounds(
         kind,
@@ -304,6 +403,7 @@ fn option_parameter(argument: &mut FnArg) -> Result<OptionParameter> {
         name,
         description,
         required,
+        choices,
         min,
         max,
         min_length,
@@ -351,6 +451,27 @@ fn take_option_attributes(attributes: &mut Vec<Attribute>) -> Result<OptionAttri
                 &attribute,
                 "max_length",
             )?;
+        } else if attribute.path().is_ident("choice") {
+            match &attribute.meta {
+                Meta::Path(_) => {
+                    if parsed.typed_choice {
+                        return Err(Error::new_spanned(
+                            attribute,
+                            "duplicate bare `#[choice]` marker",
+                        ));
+                    }
+                    parsed.typed_choice = true;
+                }
+                Meta::List(_) => parsed
+                    .inline_choices
+                    .push(attribute.parse_args::<InlineChoiceArgs>()?),
+                Meta::NameValue(_) => {
+                    return Err(Error::new_spanned(
+                        attribute,
+                        "expected bare `#[choice]` or `#[choice(name = \"...\", value = ...)]`",
+                    ));
+                }
+            }
         } else {
             retained.push(attribute);
         }
@@ -394,6 +515,148 @@ fn parse_expression_attribute(attribute: &Attribute, name: &str) -> Result<Expr>
         ));
     };
     Ok(meta.value.clone())
+}
+
+fn parse_inline_choices(kind: OptionKind, choices: Vec<InlineChoiceArgs>) -> Result<ChoiceSource> {
+    if choices.is_empty() {
+        return Ok(ChoiceSource::None);
+    }
+    if choices.len() > MAX_CHOICES {
+        return Err(Error::new(
+            choices[MAX_CHOICES]
+                .name
+                .as_ref()
+                .map_or_else(proc_macro2::Span::call_site, LitStr::span),
+            "Discord command options support at most 25 choices",
+        ));
+    }
+    if !matches!(
+        kind,
+        OptionKind::String | OptionKind::Integer | OptionKind::Number
+    ) {
+        return Err(Error::new(
+            choices[0]
+                .name
+                .as_ref()
+                .map_or_else(proc_macro2::Span::call_site, LitStr::span),
+            "Discord choices are only supported for `String`, `i64`, and `f64` options",
+        ));
+    }
+
+    let mut parsed = Vec::with_capacity(choices.len());
+    let mut names = HashSet::new();
+    for choice in choices {
+        let name = choice.name.ok_or_else(|| {
+            Error::new(
+                proc_macro2::Span::call_site(),
+                "inline choices require `name = \"...\"`",
+            )
+        })?;
+        validate_choice_name(&name)?;
+        if !names.insert(name.value()) {
+            return Err(Error::new(name.span(), "duplicate Discord choice name"));
+        }
+        let expression = choice
+            .value
+            .ok_or_else(|| Error::new(name.span(), "inline choices require `value = ...`"))?;
+        let value = match kind {
+            OptionKind::String => parse_string_choice_value(&expression)?,
+            OptionKind::Integer => InlineChoiceValue::Integer(parse_integer_bound(&expression)?),
+            OptionKind::Number => InlineChoiceValue::Number(parse_number_bound(&expression)?),
+            _ => unreachable!("choice-compatible kinds were validated"),
+        };
+        if parsed
+            .iter()
+            .any(|existing: &InlineChoice| same_choice_value(&existing.value, &value))
+        {
+            return Err(Error::new_spanned(
+                expression,
+                "duplicate Discord choice value",
+            ));
+        }
+        parsed.push(InlineChoice { name, value });
+    }
+
+    Ok(ChoiceSource::Inline(parsed))
+}
+
+fn validate_choice_name(name: &LitStr) -> Result<()> {
+    let length = name.value().chars().count();
+    if !(1..=100).contains(&length) {
+        return Err(Error::new(
+            name.span(),
+            "Discord choice names must contain between 1 and 100 characters",
+        ));
+    }
+    Ok(())
+}
+
+fn parse_string_choice_value(expression: &Expr) -> Result<InlineChoiceValue> {
+    let Expr::Lit(ExprLit {
+        lit: Lit::Str(value),
+        ..
+    }) = expression
+    else {
+        return Err(Error::new_spanned(
+            expression,
+            "string choices require string literal values",
+        ));
+    };
+    if value.value().chars().count() > MAX_CHOICE_STRING_LENGTH {
+        return Err(Error::new(
+            value.span(),
+            "Discord string choice values must contain at most 100 characters",
+        ));
+    }
+    Ok(InlineChoiceValue::String(value.clone()))
+}
+
+fn same_choice_value(left: &InlineChoiceValue, right: &InlineChoiceValue) -> bool {
+    match (left, right) {
+        (InlineChoiceValue::String(left), InlineChoiceValue::String(right)) => {
+            left.value() == right.value()
+        }
+        (InlineChoiceValue::Integer(left), InlineChoiceValue::Integer(right)) => left == right,
+        (InlineChoiceValue::Number(left), InlineChoiceValue::Number(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn validate_typed_choice_type(ty: &Type) -> Result<bool> {
+    let (inner, required) = match option_inner_type(ty)? {
+        Some(inner) => {
+            if option_inner_type(inner)?.is_some() {
+                return Err(Error::new_spanned(
+                    ty,
+                    "nested `Option<Option<T>>` slash-command parameters are not supported",
+                ));
+            }
+            (inner, false)
+        }
+        None => (ty, true),
+    };
+
+    let Type::Path(path) = inner else {
+        return Err(Error::new_spanned(
+            inner,
+            "bare `#[choice]` requires a type that derives `CommandChoice`",
+        ));
+    };
+    let Some(segment) = path.path.segments.last() else {
+        return Err(Error::new_spanned(
+            inner,
+            "bare `#[choice]` requires a type that derives `CommandChoice`",
+        ));
+    };
+    if !matches!(segment.arguments, PathArguments::None)
+        || known_option_kind(&segment.ident).is_some()
+    {
+        return Err(Error::new_spanned(
+            inner,
+            "bare `#[choice]` requires a type that derives `CommandChoice`",
+        ));
+    }
+    Ok(required)
 }
 
 fn option_type(ty: &Type) -> Result<(OptionKind, bool)> {
@@ -452,16 +715,20 @@ fn supported_option_kind(ty: &Type) -> Result<OptionKind> {
         return Err(unsupported_option_type(ty));
     }
 
-    match segment.ident.to_string().as_str() {
-        "String" => Ok(OptionKind::String),
-        "bool" => Ok(OptionKind::Boolean),
-        "i64" => Ok(OptionKind::Integer),
-        "f64" => Ok(OptionKind::Number),
-        "UserId" => Ok(OptionKind::User),
-        "ChannelId" => Ok(OptionKind::Channel),
-        "RoleId" => Ok(OptionKind::Role),
-        "AttachmentId" => Ok(OptionKind::Attachment),
-        _ => Err(unsupported_option_type(ty)),
+    known_option_kind(&segment.ident).ok_or_else(|| unsupported_option_type(ty))
+}
+
+fn known_option_kind(ident: &Ident) -> Option<OptionKind> {
+    match ident.to_string().as_str() {
+        "String" => Some(OptionKind::String),
+        "bool" => Some(OptionKind::Boolean),
+        "i64" => Some(OptionKind::Integer),
+        "f64" => Some(OptionKind::Number),
+        "UserId" => Some(OptionKind::User),
+        "ChannelId" => Some(OptionKind::Channel),
+        "RoleId" => Some(OptionKind::Role),
+        "AttachmentId" => Some(OptionKind::Attachment),
+        _ => None,
     }
 }
 
@@ -575,7 +842,7 @@ fn string_bounds(
     Ok((min, max))
 }
 
-fn parse_integer_bound(expression: &Expr) -> Result<i64> {
+pub(crate) fn parse_integer_bound(expression: &Expr) -> Result<i64> {
     let (negative, literal) = signed_literal(expression)?;
     let Lit::Int(literal) = literal else {
         return Err(Error::new_spanned(
@@ -599,7 +866,7 @@ fn parse_integer_bound(expression: &Expr) -> Result<i64> {
     Ok(value as i64)
 }
 
-fn parse_number_bound(expression: &Expr) -> Result<f64> {
+pub(crate) fn parse_number_bound(expression: &Expr) -> Result<f64> {
     let (negative, literal) = signed_literal(expression)?;
     let magnitude = match literal {
         Lit::Float(literal) => literal
@@ -682,6 +949,19 @@ fn option_descriptor_tokens(option: &OptionParameter) -> TokenStream {
         )
     };
 
+    descriptor = match &option.choices {
+        ChoiceSource::None => descriptor,
+        ChoiceSource::Typed => quote! {
+            (#descriptor).with_choices(<#ty as ::gloam_commands::CommandChoice>::CHOICES)
+        },
+        ChoiceSource::Inline(choices) => {
+            let choices = choices.iter().map(inline_choice_tokens);
+            quote! {
+                (#descriptor).with_choices(&[#(#choices),*])
+            }
+        }
+    };
+
     if let Some(min) = option.min {
         descriptor = match min {
             NumericBound::Integer(value) => quote! { (#descriptor).min_integer(#value) },
@@ -701,6 +981,21 @@ fn option_descriptor_tokens(option: &OptionParameter) -> TokenStream {
         descriptor = quote! { (#descriptor).max_length(#value) };
     }
     descriptor
+}
+
+fn inline_choice_tokens(choice: &InlineChoice) -> TokenStream {
+    let name = &choice.name;
+    match &choice.value {
+        InlineChoiceValue::String(value) => {
+            quote! { ::gloam_commands::CommandChoiceDescriptor::string(#name, #value) }
+        }
+        InlineChoiceValue::Integer(value) => {
+            quote! { ::gloam_commands::CommandChoiceDescriptor::integer(#name, #value) }
+        }
+        InlineChoiceValue::Number(value) => {
+            quote! { ::gloam_commands::CommandChoiceDescriptor::number(#name, #value) }
+        }
+    }
 }
 
 fn validate_return_type(output: &ReturnType) -> Result<()> {

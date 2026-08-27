@@ -160,14 +160,16 @@ Model Discord's native chat-input hierarchy directly.
 
 ## Phase 8 — Choices and typed choice enums
 
+**Status:** Complete
+
 Add static slash-command choices without falling back to untyped strings.
 
-- [ ] Add inline choice metadata for supported scalar option types.
-- [ ] Add `#[derive(CommandChoice)]`.
-- [ ] Add `#[choice(name = "...")]` variant metadata.
-- [ ] Generate Discord choice schemas from enums.
-- [ ] Convert resolved choice values back into typed enum variants.
-- [ ] Validate duplicate and invalid choice values at compile time where possible.
+- [x] Add inline choice metadata for supported scalar option types.
+- [x] Add `#[derive(CommandChoice)]`.
+- [x] Add `#[choice(name = "...")]` variant metadata.
+- [x] Generate Discord choice schemas from enums.
+- [x] Convert resolved choice values back into typed enum variants.
+- [x] Validate duplicate and invalid choice values at compile time where possible.
 
 **Exit criteria:** handlers can receive typed enum choices while Discord receives matching static choice metadata.
 

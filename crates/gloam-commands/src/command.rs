@@ -10,6 +10,55 @@ pub type CommandFuture = Pin<Box<dyn Future<Output = Result<()>> + Send + 'stati
 /// Erased handler function stored in the command registry.
 pub type CommandHandler<D> = fn(Context<D>) -> CommandFuture;
 
+/// Static scalar value associated with a Discord command-option choice.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CommandChoiceValue {
+    /// String choice value.
+    String(&'static str),
+    /// Integer choice value.
+    Integer(i64),
+    /// Number choice value.
+    Number(f64),
+}
+
+/// Static metadata describing one Discord command-option choice.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CommandChoiceDescriptor {
+    /// Human-readable choice name shown by Discord.
+    pub name: &'static str,
+    /// Scalar value submitted by Discord for this choice.
+    pub value: CommandChoiceValue,
+}
+
+impl CommandChoiceDescriptor {
+    /// Creates a string choice descriptor.
+    #[must_use]
+    pub const fn string(name: &'static str, value: &'static str) -> Self {
+        Self {
+            name,
+            value: CommandChoiceValue::String(value),
+        }
+    }
+
+    /// Creates an integer choice descriptor.
+    #[must_use]
+    pub const fn integer(name: &'static str, value: i64) -> Self {
+        Self {
+            name,
+            value: CommandChoiceValue::Integer(value),
+        }
+    }
+
+    /// Creates a number choice descriptor.
+    #[must_use]
+    pub const fn number(name: &'static str, value: f64) -> Self {
+        Self {
+            name,
+            value: CommandChoiceValue::Number(value),
+        }
+    }
+}
+
 /// Static metadata describing one Discord chat-input command option.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CommandOptionDescriptor {
@@ -21,6 +70,8 @@ pub struct CommandOptionDescriptor {
     pub kind: ApplicationCommandOptionType,
     /// Whether Discord requires this option in an invocation.
     pub required: bool,
+    /// Fixed choices accepted by this option.
+    pub choices: &'static [CommandChoiceDescriptor],
     /// Optional minimum numeric value.
     pub min_value: Option<ApplicationCommandNumericValue>,
     /// Optional maximum numeric value.
@@ -45,11 +96,19 @@ impl CommandOptionDescriptor {
             description,
             kind,
             required,
+            choices: &[],
             min_value: None,
             max_value: None,
             min_length: None,
             max_length: None,
         }
+    }
+
+    /// Attaches fixed choice metadata.
+    #[must_use]
+    pub const fn with_choices(mut self, choices: &'static [CommandChoiceDescriptor]) -> Self {
+        self.choices = choices;
+        self
     }
 
     /// Sets the minimum numeric value.

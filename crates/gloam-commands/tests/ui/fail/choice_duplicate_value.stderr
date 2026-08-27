@@ -1,0 +1,5 @@
+error: duplicate Discord choice value
+ --> tests/ui/fail/choice_duplicate_value.rs:8:5
+  |
+8 |     Second,
+  |     ^^^^^^

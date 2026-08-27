@@ -2,7 +2,7 @@
 
 A focused Discord **slash-command framework** for [Gloamwire](https://github.com/aliceblackrose/gloamwire), written for Rust 1.98 and Edition 2024.
 
-> **Current status:** Phase 7 — subcommands and groups.
+> **Current status:** Phase 8 — choices and typed choice enums.
 
 The framework is intentionally limited to Discord chat-input application commands. It does **not** implement prefix commands, message-content parsing, or a hybrid prefix/slash command abstraction.
 
@@ -19,6 +19,7 @@ The framework is intentionally limited to Discord chat-input application command
 - Bound framework-owned command tasks instead of accumulating unbounded scheduler waiters.
 - Preserve Discord interaction acknowledgement rules across cloned command contexts.
 - Model Discord-native subcommands and subcommand groups without a parallel nested registry.
+- Keep static choice registration and typed choice extraction derived from one enum definition.
 
 ## Workspace
 
@@ -103,6 +104,66 @@ The macro validates Discord's supported ranges, rejects incompatible constraints
 
 Dispatch parses application-command data once through Gloamwire. `Context<D>` retains that parsed data, and the generated adapter extracts each typed parameter before calling the user's async function. Missing required options and malformed option values surface as framework errors rather than being silently defaulted.
 
+### Choices and typed choice enums
+
+Static Discord choices use the same generated option descriptor that powers registration and runtime extraction. Built-in String, Integer, and Number parameters can declare inline choices directly:
+
+```rust,ignore
+#[command(description = "Choose output format")]
+async fn format(
+    ctx: Context<State>,
+    #[description = "Output format"]
+    #[choice(name = "Text", value = "text")]
+    #[choice(name = "JSON", value = "json")]
+    format: String,
+) -> Result<()> {
+    ctx.reply(format!("Selected {format}")).await?;
+    Ok(())
+}
+```
+
+For a typed handler parameter, derive `CommandChoice` on a unit-variant enum and mark the parameter with a bare `#[choice]`:
+
+```rust,ignore
+use gloam_commands::prelude::*;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, CommandChoice)]
+enum Mode {
+    #[choice(name = "Fast", value = "fast")]
+    Fast,
+    #[choice(name = "Safe", value = "safe")]
+    Safe,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, CommandChoice)]
+enum Level {
+    #[choice(name = "Low", value = 1)]
+    Low,
+    #[choice(name = "High", value = 2)]
+    High,
+}
+
+#[command(description = "Configure execution")]
+async fn configure(
+    ctx: Context<State>,
+    #[description = "Execution mode"]
+    #[choice]
+    mode: Mode,
+    #[description = "Optional level"]
+    #[choice]
+    level: Option<Level>,
+) -> Result<()> {
+    ctx.reply(format!("Configured {mode:?} at {level:?}")).await?;
+    Ok(())
+}
+```
+
+Typed choice enums support Discord String, Integer, and Number choices. Enum values must use one compatible scalar kind; an integer value may participate in a Number enum when another variant uses a floating-point value. Variant display names are required. If a variant omits `value`, the enum is a String choice enum and the Rust variant identifier is used as the submitted value.
+
+The derive rejects non-unit variants, duplicate names or values, mixed String/numeric values, out-of-range numeric values, choice names outside Discord's length limits, string values longer than Discord allows, and more than 25 variants. Typed extraction returns the enum variant and reports `InvalidChoice` if a malformed or stale interaction submits an unregistered value.
+
+Inline choices are supported only for built-in `String`, `i64`, and `f64` options and are likewise validated for count, duplicate names/values, value kind, and Discord ranges. Choice metadata is converted directly into Gloamwire's existing application-command choice model during synchronization; there is no parallel HTTP schema.
+
 ### Subcommands and groups
 
 `#[group]` applies to an inline module and generates a Discord-native command tree. Direct `#[command]` functions become subcommands. One nested `#[group]` level becomes a Discord subcommand group containing its direct command leaves:
@@ -161,7 +222,7 @@ Available policies are:
 - `Registration::Global` — bulk-overwrites the application's global command set;
 - `Registration::None` — performs no registration HTTP requests and leaves command management external.
 
-Generated command trees are converted directly into Gloamwire's application-command request models. Top-level leaves emit scalar options; direct children of a group emit Discord `SUB_COMMAND` options; nested groups emit `SUB_COMMAND_GROUP` options containing their command leaves. Ordering stays deterministic because synchronization walks the framework's `BTreeMap`-backed registry and preserves each validated child vector's order.
+Generated command trees are converted directly into Gloamwire's application-command request models. Top-level leaves emit scalar options; direct children of a group emit Discord `SUB_COMMAND` options; nested groups emit `SUB_COMMAND_GROUP` options containing their command leaves. Scalar option metadata includes requiredness, bounds, string lengths, and static choices from the same generated descriptors used by handler extraction. Ordering stays deterministic because synchronization walks the framework's `BTreeMap`-backed registry and preserves each validated child vector's order.
 
 In managed mode, `Framework::run(...)` waits for the first Discord `READY` dispatch, reads the application ID from Gloamwire's typed `ReadyEvent`, and synchronizes once before continuing normal command handling. Applications that own their Gateway loop can synchronize explicitly:
 
@@ -212,7 +273,9 @@ Applications that already own a Gloamwire Gateway loop can call `Framework::disp
 - requires a slash-command description;
 - supports an optional explicit `name = "..."`;
 - accepts supported typed slash-command parameters after the context;
-- validates command names, descriptions, parameter descriptions, option ordering, option count, supported types, and supported constraints;
+- supports inline static choices on String, Integer, and Number options;
+- supports typed `CommandChoice` enum parameters through a bare `#[choice]` marker;
+- validates command names, descriptions, parameter descriptions, option ordering, option count, supported types, constraints, and static choices;
 - preserves the original Rust function;
 - generates the static descriptor and erased extraction/handler adapter used by `commands![...]`.
 
