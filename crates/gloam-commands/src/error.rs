@@ -32,7 +32,7 @@ pub enum Error {
     #[error("original interaction response has already been deleted")]
     OriginalResponseDeleted,
 
-    /// A deferred public original response was asked to become ephemeral.
+    /// A deferred original response was asked to change public/ephemeral visibility.
     #[error("interaction response visibility cannot be changed after deferral")]
     ResponseVisibilityMismatch,
 
