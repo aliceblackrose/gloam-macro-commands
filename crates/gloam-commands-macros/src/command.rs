@@ -161,14 +161,57 @@ fn validate_signature(function: &ItemFn) -> Result<()> {
         ));
     }
 
-    if matches!(signature.output, ReturnType::Default) {
+    validate_return_type(&signature.output)?;
+    let _ = context_type(function)?;
+    Ok(())
+}
+
+fn validate_return_type(output: &ReturnType) -> Result<()> {
+    let ReturnType::Type(_, output) = output else {
         return Err(Error::new_spanned(
-            &signature.output,
-            "slash commands must declare a result return type",
+            output,
+            "slash commands must return `Result<()>`",
+        ));
+    };
+
+    let Type::Path(result) = output.as_ref() else {
+        return Err(Error::new_spanned(
+            output,
+            "slash commands must return `Result<()>`",
+        ));
+    };
+    let Some(segment) = result.path.segments.last() else {
+        return Err(Error::new_spanned(
+            output,
+            "slash commands must return `Result<()>`",
+        ));
+    };
+
+    if segment.ident != "Result" {
+        return Err(Error::new_spanned(
+            output,
+            "slash commands must return `Result<()>`",
         ));
     }
 
-    let _ = context_type(function)?;
+    let PathArguments::AngleBracketed(arguments) = &segment.arguments else {
+        return Err(Error::new_spanned(
+            output,
+            "slash commands must return `Result<()>`",
+        ));
+    };
+
+    let is_unit_result = matches!(
+        arguments.args.first(),
+        Some(GenericArgument::Type(Type::Tuple(unit))) if arguments.args.len() == 1 && unit.elems.is_empty()
+    );
+    if !is_unit_result {
+        return Err(Error::new_spanned(
+            output,
+            "slash commands must return `Result<()>`",
+        ));
+    }
+
     Ok(())
 }
 
