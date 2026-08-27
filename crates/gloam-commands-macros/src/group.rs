@@ -122,10 +122,8 @@ fn child_factories(items: &[Item]) -> Result<Vec<TokenStream>> {
         match item {
             Item::Fn(function) if has_attribute(&function.attrs, "command") => {
                 let suffix = function.sig.ident.unraw().to_string();
-                let factory = format_ident!(
-                    "__gloam_command_{suffix}",
-                    span = function.sig.ident.span()
-                );
+                let factory =
+                    format_ident!("__gloam_command_{suffix}", span = function.sig.ident.span());
                 factories.push(quote! { #factory() });
             }
             Item::Mod(module) if has_attribute(&module.attrs, "group") => {
