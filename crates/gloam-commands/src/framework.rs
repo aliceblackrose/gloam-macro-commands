@@ -23,6 +23,7 @@ use crate::{
     AutocompleteChoice, AutocompleteChoiceValue, AutocompleteContext, AutocompleteHandler,
     CommandErrorHandler, CommandFuture, CommandHandler, CommandHook, CommandPolicy, CommandRegistry,
     CommandTask, Context, DispatchOutcome, Error, Registration, Result, Runtime, SlashCommand,
+    observability,
 };
 
 /// Default upper bound for simultaneously executing command handlers.
@@ -589,6 +590,8 @@ async fn execute_command<D>(
 where
     D: Send + Sync + 'static,
 {
+    observability::command_started(context.command_path());
+
     let result = async {
         policy.evaluate(&context).await?;
 
@@ -608,11 +611,25 @@ where
     .await;
 
     match result {
-        Ok(()) => Ok(()),
-        Err(error) => match error_handler {
-            Some(handler) => (handler)(context, error).await,
-            None => Err(error),
-        },
+        Ok(()) => {
+            observability::command_succeeded(context.command_path());
+            Ok(())
+        }
+        Err(error) => {
+            observability::command_failed(context.command_path());
+            match error_handler {
+                Some(handler) => {
+                    let result = (handler)(context.clone(), error).await;
+                    if result.is_ok() {
+                        observability::command_error_handled(context.command_path());
+                    } else {
+                        observability::command_error_handler_failed(context.command_path());
+                    }
+                    result
+                }
+                None => Err(error),
+            }
+        }
     }
 }
 
