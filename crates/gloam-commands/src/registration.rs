@@ -1,9 +1,7 @@
 use gloamwire::{
     RestClient,
     http::{BulkOverwriteApplicationCommand, CreateApplicationCommand},
-    model::{
-        ApplicationCommand, ApplicationCommandOption, ApplicationId, GuildId,
-    },
+    model::{ApplicationCommand, ApplicationCommandOption, ApplicationId, GuildId},
 };
 
 use crate::{CommandDescriptor, CommandOptionDescriptor, CommandRegistry, Result};
@@ -42,11 +40,7 @@ impl Registration {
                     .map(BulkOverwriteApplicationCommand::from)
                     .collect::<Vec<_>>();
                 Ok(rest
-                    .bulk_overwrite_guild_application_commands(
-                        application_id,
-                        guild_id,
-                        &commands,
-                    )
+                    .bulk_overwrite_guild_application_commands(application_id, guild_id, &commands)
                     .await?)
             }
             Self::None => Ok(Vec::new()),
@@ -89,13 +83,10 @@ fn create_option(descriptor: &CommandOptionDescriptor) -> ApplicationCommandOpti
 
 #[cfg(test)]
 mod tests {
-    use gloamwire::model::{
-        ApplicationCommandNumericValue, ApplicationCommandOptionType, GuildId,
-    };
+    use gloamwire::model::{ApplicationCommandNumericValue, ApplicationCommandOptionType, GuildId};
 
     use crate::{
-        CommandDescriptor, CommandOptionDescriptor, CommandRegistry, Context, Result,
-        SlashCommand,
+        CommandDescriptor, CommandOptionDescriptor, CommandRegistry, Context, Result, SlashCommand,
     };
 
     use super::{Registration, create_commands};
@@ -129,7 +120,10 @@ mod tests {
     #[test]
     fn registration_defaults_to_none() {
         assert_eq!(Registration::default(), Registration::None);
-        assert_eq!(Registration::Guild(GuildId::new(42)), Registration::Guild(GuildId::new(42)));
+        assert_eq!(
+            Registration::Guild(GuildId::new(42)),
+            Registration::Guild(GuildId::new(42))
+        );
     }
 
     #[test]
@@ -143,14 +137,23 @@ mod tests {
         assert_eq!(commands.len(), 2);
         assert_eq!(commands[0].name, "alpha");
         assert_eq!(commands[1].name, "query");
-        assert_eq!(commands[1].description.as_deref(), Some("Search for results"));
+        assert_eq!(
+            commands[1].description.as_deref(),
+            Some("Search for results")
+        );
         assert_eq!(commands[1].options.len(), 2);
 
         let count = &commands[1].options[0];
         assert_eq!(count.kind, ApplicationCommandOptionType::INTEGER);
         assert_eq!(count.required, Some(true));
-        assert_eq!(count.min_value, Some(ApplicationCommandNumericValue::Integer(1)));
-        assert_eq!(count.max_value, Some(ApplicationCommandNumericValue::Integer(25)));
+        assert_eq!(
+            count.min_value,
+            Some(ApplicationCommandNumericValue::Integer(1))
+        );
+        assert_eq!(
+            count.max_value,
+            Some(ApplicationCommandNumericValue::Integer(25))
+        );
 
         let query = &commands[1].options[1];
         assert_eq!(query.kind, ApplicationCommandOptionType::STRING);
