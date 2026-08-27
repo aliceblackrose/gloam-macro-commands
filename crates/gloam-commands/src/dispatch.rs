@@ -14,6 +14,11 @@ pub enum DispatchOutcome {
         /// Top-level Discord command name that was not found.
         name: String,
     },
+    /// A registered command could not start because the global execution limit is full.
+    AtCapacity {
+        /// Registered command name that could not start.
+        name: &'static str,
+    },
     /// A registered command was spawned for asynchronous execution.
     Spawned(CommandTask),
 }
@@ -24,6 +29,10 @@ impl fmt::Debug for DispatchOutcome {
             Self::Ignored => formatter.write_str("Ignored"),
             Self::Unregistered { name } => formatter
                 .debug_struct("Unregistered")
+                .field("name", name)
+                .finish(),
+            Self::AtCapacity { name } => formatter
+                .debug_struct("AtCapacity")
                 .field("name", name)
                 .finish(),
             Self::Spawned(task) => formatter.debug_tuple("Spawned").field(task).finish(),
