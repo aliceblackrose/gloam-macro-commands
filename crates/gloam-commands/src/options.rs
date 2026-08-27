@@ -4,7 +4,7 @@ use gloamwire::model::{
     RoleId, UserId,
 };
 
-use crate::{Error, Result};
+use crate::{CommandChoiceDescriptor, Error, Result};
 
 /// Submitted scalar options for one resolved Discord chat-input command path.
 ///
@@ -41,6 +41,14 @@ pub trait CommandOption: Sized {
 
     /// Extracts this value from one submitted option name.
     fn extract(options: &CommandOptions<'_>, name: &'static str) -> Result<Self>;
+}
+
+/// Typed command option backed by a fixed Discord choice list.
+///
+/// Implementations are normally generated with [`macro@crate::CommandChoice`].
+pub trait CommandChoice: CommandOption {
+    /// Static choices registered for this typed option.
+    const CHOICES: &'static [CommandChoiceDescriptor];
 }
 
 impl CommandOption for String {
@@ -148,6 +156,13 @@ where
 
         T::extract(options, name).map(Some)
     }
+}
+
+impl<T> CommandChoice for Option<T>
+where
+    T: CommandChoice,
+{
+    const CHOICES: &'static [CommandChoiceDescriptor] = T::CHOICES;
 }
 
 fn required_option<'a>(
