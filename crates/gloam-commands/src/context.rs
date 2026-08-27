@@ -1,6 +1,10 @@
 use std::sync::Arc;
 
-use gloamwire::{RestClient, gateway::ShardId, model::Interaction};
+use gloamwire::{
+    RestClient,
+    gateway::ShardId,
+    model::{ApplicationCommandInteractionData, Interaction},
+};
 use tokio::sync::Mutex;
 
 use crate::{Runtime, response::ResponseState};
@@ -9,6 +13,7 @@ use crate::{Runtime, response::ResponseState};
 pub struct Context<D> {
     runtime: Arc<Runtime<D>>,
     interaction: Arc<Interaction>,
+    command_data: Arc<ApplicationCommandInteractionData>,
     command_name: &'static str,
     shard_id: Option<ShardId>,
     response_state: Arc<Mutex<ResponseState>>,
@@ -18,12 +23,14 @@ impl<D> Context<D> {
     pub(crate) fn new(
         runtime: Arc<Runtime<D>>,
         interaction: Arc<Interaction>,
+        command_data: Arc<ApplicationCommandInteractionData>,
         command_name: &'static str,
         shard_id: Option<ShardId>,
     ) -> Self {
         Self {
             runtime,
             interaction,
+            command_data,
             command_name,
             shard_id,
             response_state: Arc::new(Mutex::new(ResponseState::Pending)),
@@ -54,6 +61,12 @@ impl<D> Context<D> {
         &self.interaction
     }
 
+    /// Returns parsed application-command data for this invocation.
+    #[must_use]
+    pub fn command_data(&self) -> &ApplicationCommandInteractionData {
+        &self.command_data
+    }
+
     /// Returns the registered slash-command name being executed.
     #[must_use]
     pub const fn command_name(&self) -> &'static str {
@@ -76,6 +89,7 @@ impl<D> Clone for Context<D> {
         Self {
             runtime: Arc::clone(&self.runtime),
             interaction: Arc::clone(&self.interaction),
+            command_data: Arc::clone(&self.command_data),
             command_name: self.command_name,
             shard_id: self.shard_id,
             response_state: Arc::clone(&self.response_state),
