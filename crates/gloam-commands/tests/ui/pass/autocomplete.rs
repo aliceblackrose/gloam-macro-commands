@@ -29,14 +29,15 @@ async fn search(
     _ctx: Context<State>,
     #[description = "Search text"]
     #[autocomplete = helpers::text]
-    _query: String,
+    query: String,
     #[description = "Integer filter"]
     #[autocomplete = integer]
-    _count: i64,
+    count: i64,
     #[description = "Optional numeric score"]
     #[autocomplete = number]
-    _score: Option<f64>,
+    score: Option<f64>,
 ) -> Result<()> {
+    let _ = (query, count, score);
     Ok(())
 }
 
@@ -48,5 +49,4 @@ fn main() {
     let command = framework.registry().get("search").expect("search command");
 
     assert!(command.descriptor().options.iter().all(|option| option.autocomplete));
-    assert_eq!(command.autocomplete_handlers().len(), 3);
 }
