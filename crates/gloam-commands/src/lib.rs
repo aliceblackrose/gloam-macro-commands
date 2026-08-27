@@ -7,6 +7,7 @@ extern crate self as gloam_commands;
 
 mod command;
 mod context;
+mod dispatch;
 mod error;
 mod framework;
 mod registry;
@@ -14,13 +15,14 @@ mod runtime;
 
 pub use command::{CommandDescriptor, CommandFuture, CommandHandler, SlashCommand};
 pub use context::Context;
+pub use dispatch::{CommandTask, DispatchOutcome};
 pub use error::{Error, Result};
-pub use framework::{Framework, FrameworkBuilder};
+pub use framework::{DEFAULT_MAX_CONCURRENT_COMMANDS, Framework, FrameworkBuilder};
 pub use gloam_commands_macros::{command, commands};
 pub use registry::CommandRegistry;
 pub use runtime::Runtime;
 
 /// Common imports for applications using the framework.
 pub mod prelude {
-    pub use crate::{Context, Framework, Result, command, commands};
+    pub use crate::{Context, DispatchOutcome, Framework, Result, command, commands};
 }
