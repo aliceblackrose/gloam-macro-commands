@@ -1,0 +1,5 @@
+error: string `min_length` cannot be greater than `max_length`
+  --> tests/ui/fail/invalid_string_length_range.rs:12:20
+   |
+12 |     #[max_length = 5]
+   |                    ^
