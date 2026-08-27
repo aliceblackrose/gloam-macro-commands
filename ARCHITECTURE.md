@@ -4,7 +4,7 @@
 
 Gloam Macro Commands is a high-level Discord **chat-input slash-command framework** built on top of Gloamwire.
 
-Gloamwire remains responsible for Discord protocol transport, Gateway events, REST requests, Discord models, sharding, rate limits, and interaction endpoints. This project adds command declaration, registration metadata, dispatch, typed option extraction, response ergonomics, and execution policy.
+Gloamwire remains responsible for Discord protocol transport, Gateway events, REST requests, Discord models, sharding, rate limits, and interaction endpoints. This project adds command declaration, registration metadata, dispatch, typed option extraction, static choices, response ergonomics, and execution policy.
 
 The framework does not add prefix commands or message-content parsing.
 
@@ -32,6 +32,7 @@ Owns all runtime behavior:
 - command registry;
 - interaction dispatch;
 - option extraction;
+- choice extraction;
 - response tracking;
 - synchronization;
 - checks and hooks.
@@ -41,6 +42,7 @@ Owns all runtime behavior:
 Owns compile-time transformation only:
 
 - parse command/group attributes;
+- parse inline and enum choice metadata;
 - validate supported command signatures;
 - generate static descriptors;
 - generate erased handler adapters;
@@ -123,7 +125,7 @@ Framework::builder(state)
 
 The safe default is deliberate: Discord bulk overwrite replaces the target command set, so constructing or running a framework must not mutate Discord command state unless the application explicitly selects a synchronization target.
 
-Synchronization walks `CommandRegistry<D>` in its existing `BTreeMap` order and converts each validated `SlashCommand<D>` tree into Gloamwire's public application-command request models. Leaf descriptors emit scalar options, direct group children emit Discord `SUB_COMMAND` options, and nested group nodes emit `SUB_COMMAND_GROUP` options containing subcommand leaves. The framework does not duplicate command HTTP routes or maintain a second registration schema.
+Synchronization walks `CommandRegistry<D>` in its existing `BTreeMap` order and converts each validated `SlashCommand<D>` tree into Gloamwire's public application-command request models. Leaf descriptors emit scalar options, direct group children emit Discord `SUB_COMMAND` options, and nested group nodes emit `SUB_COMMAND_GROUP` options containing subcommand leaves. Scalar option descriptors also carry bounds, string lengths, and static choice descriptors; those are converted directly into Gloamwire's existing application-command option and choice models at synchronization time. The framework does not duplicate command HTTP routes or maintain a second registration schema.
 
 In managed mode, the first typed Discord `READY` event supplies `ReadyApplication.id`. The framework synchronizes exactly once with that application ID before continuing normal managed dispatch. Applications that own their Gateway loop can call `Framework::synchronize_commands(&rest, application_id)` explicitly.
 
@@ -292,6 +294,25 @@ The macro validates supported types, option count, descriptions, ordering, const
 
 Unsupported parameter types fail at macro expansion with a diagnostic attached to the unsupported parameter span. Missing or malformed submitted values fail through explicit runtime option-extraction errors.
 
+## Choice model
+
+Static choices extend the existing typed option model rather than introducing a second invocation path.
+
+`CommandOptionDescriptor` owns a borrowed slice of `CommandChoiceDescriptor` values. Each choice stores a display name and one static String, Integer, or Number value. Registration allocates Gloamwire's owned choice request values only when converting the descriptor tree for synchronization.
+
+Built-in `String`, `i64`, and `f64` parameters may declare repeated inline `#[choice(name = "...", value = ...)]` attributes. The command macro validates that every value matches the parameter kind, that names and values are unique, and that Discord count/length/numeric limits are respected.
+
+Typed choice enums derive `CommandChoice`. The derive generates both:
+
+1. static `CommandChoiceDescriptor` metadata used by registration;
+2. a `CommandOption` extraction implementation that maps the submitted scalar value back into the enum variant.
+
+A typed enum parameter is marked with a bare `#[choice]` so the command macro intentionally accepts the otherwise unsupported user-defined type and sources its option kind and static metadata from `CommandChoice`. `Option<T>` preserves the same choice schema while making the submitted option optional.
+
+Choice enums are unit-variant enums and support String, Integer, or Number values. Variant display names are explicit. Omitted values are allowed only for String choice enums and use the Rust variant identifier as the submitted string value. Mixed String/numeric sets, duplicate names or values, unsupported fields, excessive choice counts, and out-of-range values are rejected at macro expansion.
+
+Discord normally constrains submitted values through the registered choices, but dispatch still treats the incoming interaction as untrusted input. If a stale or malformed interaction submits a scalar value that is not represented by the typed enum, extraction returns `InvalidChoice` before the user handler runs.
+
 ## Subcommands
 
 The framework models Discord's native hierarchy only:
@@ -318,6 +339,7 @@ Framework errors represent framework invariants such as:
 - invalid concurrency configuration;
 - invalid interaction payloads;
 - invalid option extraction;
+- invalid typed choice extraction;
 - unknown command paths;
 - an acknowledgement required before edit/delete/followup;
 - a repeated deferral;
@@ -334,7 +356,7 @@ Protocol/REST/Gateway errors, including command synchronization failures, remain
 3. Keep user state explicit and shared through `Runtime<D>`/`Context<D>`.
 4. Do not require message-content or other Gateway intents for slash-command functionality.
 5. Keep registration deterministic and reject duplicate command paths early.
-6. Generate registration metadata and option extraction from the same source signature.
+6. Generate registration metadata, choices, and option extraction from the same command/type declarations.
 7. Serialize and expose Discord acknowledgement semantics instead of hiding invalid transitions.
 8. Keep managed execution optional; advanced applications must be able to dispatch interactions from their own Gateway loop.
 9. Do not duplicate Gloamwire REST, Gateway, sharding, interaction, or Discord model implementations.
