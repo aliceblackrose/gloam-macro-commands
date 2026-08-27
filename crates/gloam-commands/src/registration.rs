@@ -178,6 +178,7 @@ mod tests {
     };
 
     use crate::{
+        AutocompleteContext, AutocompleteFuture, AutocompleteHandlerDescriptor,
         CommandChoiceDescriptor, CommandDescriptor, CommandOptionDescriptor, CommandRegistry,
         Context, Result, SlashCommand,
     };
@@ -220,6 +221,10 @@ mod tests {
         Box::pin(async { Ok(()) })
     }
 
+    fn autocomplete_handler(_ctx: AutocompleteContext<()>) -> AutocompleteFuture {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
     #[test]
     fn registration_defaults_to_none() {
         assert_eq!(Registration::default(), Registration::None);
@@ -232,7 +237,14 @@ mod tests {
     #[test]
     fn converts_descriptors_to_gloamwire_payloads_in_registry_order() -> Result<()> {
         let mut registry = CommandRegistry::new();
-        registry.insert(SlashCommand::new(&QUERY, handler))?;
+        registry.insert(SlashCommand::new_with_autocomplete(
+            &QUERY,
+            handler,
+            vec![AutocompleteHandlerDescriptor::new(
+                "query",
+                autocomplete_handler,
+            )],
+        ))?;
         registry.insert(SlashCommand::new(&ALPHA, handler))?;
 
         let commands = create_commands(&registry);
