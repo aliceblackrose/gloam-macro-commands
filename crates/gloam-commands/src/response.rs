@@ -86,8 +86,10 @@ impl<D> Context<D> {
         }
 
         let interaction = self.interaction();
-        let mut edit = EditWebhookMessage::default();
-        edit.content = Some(Some(content.into()));
+        let edit = EditWebhookMessage {
+            content: Some(Some(content.into())),
+            ..Default::default()
+        };
         let message = self
             .rest()
             .edit_original_interaction_response(
@@ -149,8 +151,10 @@ impl<D> Context<D> {
             }
             ReplyAction::CompleteDeferred => {
                 let interaction = self.interaction();
-                let mut edit = EditWebhookMessage::default();
-                edit.content = Some(Some(content));
+                let edit = EditWebhookMessage {
+                    content: Some(Some(content)),
+                    ..Default::default()
+                };
                 self.rest()
                     .edit_original_interaction_response(
                         interaction.application_id,
@@ -184,8 +188,10 @@ impl<D> Context<D> {
 
         let interaction = self.interaction();
         let response = if ephemeral {
-            let mut data = InteractionMessageData::default();
-            data.flags = Some(MessageFlags::EPHEMERAL);
+            let data = InteractionMessageData {
+                flags: Some(MessageFlags::EPHEMERAL),
+                ..Default::default()
+            };
             InteractionResponse {
                 kind: InteractionCallbackType::DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE,
                 data: Some(InteractionCallbackData::Message(Box::new(data))),
@@ -236,9 +242,10 @@ fn message_data(content: String, ephemeral: bool) -> InteractionMessageData {
 mod tests {
     use std::sync::Arc;
 
+    use gloamwire::model::MessageFlags;
     use tokio::sync::Mutex;
 
-    use super::{ReplyAction, ResponseState};
+    use super::{ReplyAction, ResponseState, message_data};
     use crate::Error;
 
     #[test]
@@ -283,6 +290,15 @@ mod tests {
             ResponseState::Deferred { ephemeral: true }.reply_action(false),
             Err(Error::ResponseVisibilityMismatch)
         ));
+    }
+
+    #[test]
+    fn ephemeral_message_data_sets_only_requested_visibility_flag() {
+        let public = message_data("public".to_owned(), false);
+        assert_eq!(public.flags, None);
+
+        let ephemeral = message_data("private".to_owned(), true);
+        assert_eq!(ephemeral.flags, Some(MessageFlags::EPHEMERAL));
     }
 
     #[tokio::test]
