@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use gloamwire::{RestClient, gateway::ShardId, model::Interaction};
+use tokio::sync::Mutex;
 
-use crate::Runtime;
+use crate::{Runtime, response::ResponseState};
 
 /// Per-execution context passed to slash-command handlers.
 pub struct Context<D> {
@@ -10,6 +11,7 @@ pub struct Context<D> {
     interaction: Arc<Interaction>,
     command_name: &'static str,
     shard_id: Option<ShardId>,
+    response_state: Arc<Mutex<ResponseState>>,
 }
 
 impl<D> Context<D> {
@@ -24,6 +26,7 @@ impl<D> Context<D> {
             interaction,
             command_name,
             shard_id,
+            response_state: Arc::new(Mutex::new(ResponseState::Pending)),
         }
     }
 
@@ -62,6 +65,10 @@ impl<D> Context<D> {
     pub const fn shard_id(&self) -> Option<ShardId> {
         self.shard_id
     }
+
+    pub(crate) fn response_state(&self) -> &Mutex<ResponseState> {
+        &self.response_state
+    }
 }
 
 impl<D> Clone for Context<D> {
@@ -71,6 +78,7 @@ impl<D> Clone for Context<D> {
             interaction: Arc::clone(&self.interaction),
             command_name: self.command_name,
             shard_id: self.shard_id,
+            response_state: Arc::clone(&self.response_state),
         }
     }
 }
