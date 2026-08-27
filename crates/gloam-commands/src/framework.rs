@@ -69,11 +69,7 @@ where
     }
 
     /// Routes one sharded Gloamwire Gateway event while preserving shard identity.
-    pub fn dispatch_shard(
-        &self,
-        rest: &RestClient,
-        event: &ShardEvent,
-    ) -> Result<DispatchOutcome> {
+    pub fn dispatch_shard(&self, rest: &RestClient, event: &ShardEvent) -> Result<DispatchOutcome> {
         self.spawn_prepared(self.prepare_dispatch(rest, &event.event, Some(event.shard_id))?)
     }
 
@@ -145,12 +141,7 @@ where
         let descriptor = command.descriptor();
         let handler = command.handler();
         let runtime = Arc::new(self.runtime(rest.clone()));
-        let context = Context::new(
-            runtime,
-            Arc::new(interaction),
-            descriptor.name,
-            shard_id,
-        );
+        let context = Context::new(runtime, Arc::new(interaction), descriptor.name, shard_id);
 
         Ok(PreparedDispatch::Command(PreparedCommand {
             command_name: descriptor.name,
