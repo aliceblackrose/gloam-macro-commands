@@ -5,11 +5,15 @@ use gloamwire::{
     gateway::{GatewayEvent, GatewayIntents, ShardEvent, ShardId, ShardManager},
     model::{ApplicationCommandType, Interaction, InteractionType},
 };
-use tokio::{runtime::Handle, sync::Semaphore, task::JoinSet};
+use tokio::{
+    runtime::Handle,
+    sync::{Semaphore, TryAcquireError},
+    task::JoinSet,
+};
 
 use crate::{
-    CommandHandler, CommandRegistry, CommandTask, Context, DispatchOutcome, Error, Result, Runtime,
-    SlashCommand,
+    CommandFuture, CommandHandler, CommandRegistry, CommandTask, Context, DispatchOutcome, Error,
+    Result, Runtime, SlashCommand,
 };
 
 /// Default upper bound for simultaneously executing command handlers.
@@ -63,7 +67,8 @@ where
     ///
     /// Applications that own their Gateway loop can call this for each event.
     /// Events unrelated to chat-input application commands are returned as
-    /// [`DispatchOutcome::Ignored`].
+    /// [`DispatchOutcome::Ignored`]. If every execution slot is occupied, the
+    /// command is not spawned and [`DispatchOutcome::AtCapacity`] is returned.
     pub fn dispatch(&self, rest: &RestClient, event: &GatewayEvent) -> Result<DispatchOutcome> {
         self.spawn_prepared(self.prepare_dispatch(rest, event, None)?)
     }
@@ -101,7 +106,10 @@ where
             PreparedDispatch::Command(command) => {
                 let runtime = Handle::try_current().map_err(|_| Error::NoAsyncRuntime)?;
                 let command_name = command.command_name;
-                let handle = runtime.spawn(command.execute());
+                let Some(future) = command.try_execute()? else {
+                    return Ok(DispatchOutcome::AtCapacity { name: command_name });
+                };
+                let handle = runtime.spawn(future);
                 Ok(DispatchOutcome::Spawned(CommandTask::new(
                     command_name,
                     handle,
@@ -160,8 +168,9 @@ where
 
             if let PreparedDispatch::Command(command) =
                 self.prepare_dispatch(rest, &event.event, Some(event.shard_id))?
+                && let Some(future) = command.try_execute()?
             {
-                commands.spawn(command.execute());
+                commands.spawn(future);
             }
         }
 
@@ -240,13 +249,23 @@ impl<D> PreparedCommand<D>
 where
     D: Send + Sync + 'static,
 {
-    async fn execute(self) -> Result<()> {
-        let _permit = self
-            .command_slots
-            .acquire_owned()
-            .await
-            .map_err(|_| Error::CommandSchedulerClosed)?;
-        (self.handler)(self.context).await
+    fn try_execute(self) -> Result<Option<CommandFuture>> {
+        let Self {
+            handler,
+            context,
+            command_slots,
+            ..
+        } = self;
+        let permit = match command_slots.try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(TryAcquireError::NoPermits) => return Ok(None),
+            Err(TryAcquireError::Closed) => return Err(Error::CommandSchedulerClosed),
+        };
+
+        Ok(Some(Box::pin(async move {
+            let _permit = permit;
+            (handler)(context).await
+        })))
     }
 }
 
@@ -458,26 +477,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn bounds_simultaneous_command_execution() -> Result<()> {
+    async fn rejects_commands_at_capacity_without_spawning_waiters() -> Result<()> {
         let framework = Framework::builder(ConcurrencyState::new())
             .command(SlashCommand::new(&SLOW, slow_handler))
             .max_concurrent_commands(1)
             .build()?;
         let rest = RestClient::new("test-token")?;
         let first = spawned(framework.dispatch(&rest, &interaction_event("slow"))?);
-        let second = spawned(framework.dispatch(&rest, &interaction_event("slow"))?);
+
+        assert!(matches!(
+            framework.dispatch(&rest, &interaction_event("slow"))?,
+            DispatchOutcome::AtCapacity { name } if name == "slow"
+        ));
 
         while framework.data().entered.load(Ordering::SeqCst) == 0 {
             tokio::task::yield_now().await;
         }
-        for _ in 0..32 {
+        assert_eq!(framework.data().max_active.load(Ordering::SeqCst), 1);
+
+        framework.data().release.add_permits(1);
+        first.join().await?;
+
+        let second = spawned(framework.dispatch(&rest, &interaction_event("slow"))?);
+        while framework.data().entered.load(Ordering::SeqCst) < 2 {
             tokio::task::yield_now().await;
         }
-
-        assert_eq!(framework.data().max_active.load(Ordering::SeqCst), 1);
-        framework.data().release.add_permits(2);
-        first.join().await?;
+        framework.data().release.add_permits(1);
         second.join().await?;
+
         assert_eq!(framework.data().max_active.load(Ordering::SeqCst), 1);
         Ok(())
     }
