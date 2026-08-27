@@ -1,6 +1,6 @@
 use std::sync::Mutex;
 
-use gloam_commands::prelude::*;
+use gloam_commands::{Error, prelude::*};
 use gloamwire::{
     RestClient,
     gateway::{DispatchEvent, GatewayEvent},
