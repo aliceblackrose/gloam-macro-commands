@@ -11,6 +11,7 @@ mod dispatch;
 mod error;
 mod framework;
 mod registry;
+mod response;
 mod runtime;
 
 pub use command::{CommandDescriptor, CommandFuture, CommandHandler, SlashCommand};
