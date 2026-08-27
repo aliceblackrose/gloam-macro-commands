@@ -321,8 +321,11 @@ fn resolve_command<'a, D>(
         .iter()
         .find(|child| child.descriptor().name == branch.name)
     else {
-        path.push(Box::leak(branch.name.clone().into_boxed_str()));
-        return Err(Error::UnknownCommandPath(path.join(" ")));
+        return Err(Error::UnknownCommandPath(format!(
+            "{} {}",
+            path.join(" "),
+            branch.name
+        )));
     };
     path.push(child.descriptor().name);
 
