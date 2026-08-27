@@ -65,9 +65,7 @@ mod admin {
 }
 
 #[autocomplete]
-async fn complete_empty_value(
-    _ctx: AutocompleteContext<State>,
-) -> Result<Vec<AutocompleteChoice>> {
+async fn complete_empty_value(_ctx: AutocompleteContext<State>) -> Result<Vec<AutocompleteChoice>> {
     Ok(vec![
         AutocompleteChoice::string("Empty", ""),
         AutocompleteChoice::integer("Wrong type", 1),
