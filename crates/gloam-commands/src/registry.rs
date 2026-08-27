@@ -106,6 +106,13 @@ fn validate_children<D>(
 }
 
 fn validate_leaf<D>(command: &SlashCommand<D>, path: &str) -> Result<()> {
+    let policy = command
+        .policy()
+        .expect("leaf commands always carry an execution policy");
+    if policy.max_concurrent_executions() == Some(0) {
+        return Err(Error::InvalidCommandPolicy(path.to_owned()));
+    }
+
     let options = command.descriptor().options;
     let handlers = command.autocomplete_handlers();
     let mut handler_names = BTreeSet::new();
@@ -165,8 +172,8 @@ mod tests {
     use super::CommandRegistry;
     use crate::{
         AutocompleteContext, AutocompleteFuture, AutocompleteHandlerDescriptor,
-        CommandChoiceDescriptor, CommandDescriptor, CommandOptionDescriptor, Context, Error,
-        Result, SlashCommand,
+        CommandChoiceDescriptor, CommandDescriptor, CommandOptionDescriptor, CommandPolicy, Context,
+        Error, Result, SlashCommand,
     };
 
     static PING: CommandDescriptor = CommandDescriptor::new("ping", "Check bot responsiveness");
@@ -284,6 +291,21 @@ mod tests {
         assert!(matches!(
             registry.insert(command),
             Err(Error::InvalidAutocompleteConfiguration(path)) if path == "invalid query"
+        ));
+    }
+
+    #[test]
+    fn rejects_zero_per_command_concurrency() {
+        let command = SlashCommand::new_with_policy(
+            &PING,
+            handler,
+            CommandPolicy::new().max_concurrency(0),
+        );
+        let mut registry = CommandRegistry::new();
+
+        assert!(matches!(
+            registry.insert(command),
+            Err(Error::InvalidCommandPolicy(path)) if path == "ping"
         ));
     }
 
