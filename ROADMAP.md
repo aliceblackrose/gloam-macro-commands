@@ -144,15 +144,17 @@ Register generated command schemas through Gloamwire's existing application-comm
 
 ## Phase 7 — Subcommands and groups
 
+**Status:** Complete
+
 Model Discord's native chat-input hierarchy directly.
 
-- [ ] Add `#[group]`.
-- [ ] Support `/group subcommand`.
-- [ ] Support Discord-compatible subcommand groups.
-- [ ] Resolve full command paths during dispatch.
-- [ ] Expose the resolved command path from `Context<D>`.
-- [ ] Enforce Discord hierarchy limits at compile time where possible.
-- [ ] Detect duplicate paths deterministically.
+- [x] Add `#[group]`.
+- [x] Support `/group subcommand`.
+- [x] Support Discord-compatible subcommand groups.
+- [x] Resolve full command paths during dispatch.
+- [x] Expose the resolved command path from `Context<D>`.
+- [x] Enforce Discord hierarchy limits at compile time where possible.
+- [x] Detect duplicate paths deterministically.
 
 **Exit criteria:** grouped command modules generate valid Discord subcommand trees and dispatch to the correct handler.
 
