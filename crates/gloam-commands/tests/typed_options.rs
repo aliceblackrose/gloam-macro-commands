@@ -29,8 +29,7 @@ async fn capture(
     ratio: f64,
     #[description = "Optional note"] note: Option<String>,
 ) -> Result<()> {
-    *ctx.data().captured.lock().expect("capture mutex") =
-        Some((text, enabled, count, ratio, note));
+    *ctx.data().captured.lock().expect("capture mutex") = Some((text, enabled, count, ratio, note));
     Ok(())
 }
 
@@ -117,7 +116,12 @@ async fn dispatch_extracts_typed_options_before_invoking_handler() -> Result<()>
     task.join().await?;
 
     assert_eq!(
-        framework.data().captured.lock().expect("capture mutex").as_ref(),
+        framework
+            .data()
+            .captured
+            .lock()
+            .expect("capture mutex")
+            .as_ref(),
         Some(&("hello".to_owned(), true, 7, 1.5, None))
     );
     Ok(())
