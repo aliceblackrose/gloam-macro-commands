@@ -30,6 +30,12 @@ pub use registration::Registration;
 pub use registry::CommandRegistry;
 pub use runtime::Runtime;
 
+/// Implementation details referenced by generated macro code.
+#[doc(hidden)]
+pub mod __private {
+    pub use gloamwire::model::ApplicationCommandOptionType;
+}
+
 /// Common imports for applications using the framework.
 pub mod prelude {
     pub use crate::{
