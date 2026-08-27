@@ -25,7 +25,15 @@ enum Level {
     High,
 }
 
-type Captured = (Mode, String, Option<Level>);
+#[derive(Debug, Clone, Copy, PartialEq, gloam_commands::CommandChoice)]
+enum Ratio {
+    #[choice(name = "Half", value = 0.5)]
+    Half,
+    #[choice(name = "Full", value = 1)]
+    Full,
+}
+
+type Captured = (Mode, Ratio, String, Option<Level>);
 
 struct State {
     captured: Mutex<Option<Captured>>,
@@ -37,6 +45,9 @@ async fn configure(
     #[description = "Execution mode"]
     #[choice]
     mode: Mode,
+    #[description = "Typed ratio"]
+    #[choice]
+    ratio: Ratio,
     #[description = "Output format"]
     #[choice(name = "Text", value = "text")]
     #[choice(name = "JSON", value = "json")]
@@ -45,7 +56,7 @@ async fn configure(
     #[choice]
     level: Option<Level>,
 ) -> Result<()> {
-    *ctx.data().captured.lock().expect("capture mutex") = Some((mode, format, level));
+    *ctx.data().captured.lock().expect("capture mutex") = Some((mode, ratio, format, level));
     Ok(())
 }
 
@@ -58,7 +69,7 @@ fn generated_descriptor_contains_typed_and_inline_choices() -> Result<()> {
         .expect("registered configure command")
         .descriptor();
 
-    assert_eq!(descriptor.options.len(), 3);
+    assert_eq!(descriptor.options.len(), 4);
 
     let mode = descriptor.options[0];
     assert_eq!(mode.kind, ApplicationCommandOptionType::STRING);
@@ -69,14 +80,21 @@ fn generated_descriptor_contains_typed_and_inline_choices() -> Result<()> {
     assert_eq!(mode.choices[1].name, "Safe");
     assert_eq!(mode.choices[1].value, CommandChoiceValue::String("safe"));
 
-    let format = descriptor.options[1];
+    let ratio = descriptor.options[1];
+    assert_eq!(ratio.kind, ApplicationCommandOptionType::NUMBER);
+    assert!(ratio.required);
+    assert_eq!(ratio.choices.len(), 2);
+    assert_eq!(ratio.choices[0].value, CommandChoiceValue::Number(0.5));
+    assert_eq!(ratio.choices[1].value, CommandChoiceValue::Number(1.0));
+
+    let format = descriptor.options[2];
     assert_eq!(format.kind, ApplicationCommandOptionType::STRING);
     assert!(format.required);
     assert_eq!(format.choices.len(), 2);
     assert_eq!(format.choices[0].value, CommandChoiceValue::String("text"));
     assert_eq!(format.choices[1].value, CommandChoiceValue::String("json"));
 
-    let level = descriptor.options[2];
+    let level = descriptor.options[3];
     assert_eq!(level.kind, ApplicationCommandOptionType::INTEGER);
     assert!(!level.required);
     assert_eq!(level.choices.len(), 2);
@@ -90,7 +108,10 @@ async fn dispatch_extracts_choice_enums_before_invoking_handler() -> Result<()> 
     let framework = framework()?;
     let rest = RestClient::new("test-token")?;
 
-    let task = spawned(framework.dispatch(&rest, &interaction_event("safe", "json", Some(2)))?);
+    let task = spawned(framework.dispatch(
+        &rest,
+        &interaction_event("safe", 0.5, "json", Some(2)),
+    )?);
     task.join().await?;
 
     assert_eq!(
@@ -100,7 +121,12 @@ async fn dispatch_extracts_choice_enums_before_invoking_handler() -> Result<()> 
             .lock()
             .expect("capture mutex")
             .as_ref(),
-        Some(&(Mode::Safe, "json".to_owned(), Some(Level::High)))
+        Some(&(
+            Mode::Safe,
+            Ratio::Half,
+            "json".to_owned(),
+            Some(Level::High)
+        ))
     );
     Ok(())
 }
@@ -110,7 +136,10 @@ async fn optional_choice_enum_allows_missing_option() -> Result<()> {
     let framework = framework()?;
     let rest = RestClient::new("test-token")?;
 
-    let task = spawned(framework.dispatch(&rest, &interaction_event("fast", "text", None))?);
+    let task = spawned(framework.dispatch(
+        &rest,
+        &interaction_event("fast", 1.0, "text", None),
+    )?);
     task.join().await?;
 
     assert_eq!(
@@ -120,7 +149,7 @@ async fn optional_choice_enum_allows_missing_option() -> Result<()> {
             .lock()
             .expect("capture mutex")
             .as_ref(),
-        Some(&(Mode::Fast, "text".to_owned(), None))
+        Some(&(Mode::Fast, Ratio::Full, "text".to_owned(), None))
     );
     Ok(())
 }
@@ -130,10 +159,13 @@ async fn rejects_unregistered_typed_choice_value() -> Result<()> {
     let framework = framework()?;
     let rest = RestClient::new("test-token")?;
 
-    let error = spawned(framework.dispatch(&rest, &interaction_event("turbo", "text", None))?)
-        .join()
-        .await
-        .expect_err("unknown typed choice must fail extraction");
+    let error = spawned(framework.dispatch(
+        &rest,
+        &interaction_event("turbo", 0.5, "text", None),
+    )?)
+    .join()
+    .await
+    .expect_err("unknown typed choice must fail extraction");
 
     assert!(matches!(error, Error::InvalidChoice { name: "mode" }));
     assert!(
@@ -155,9 +187,10 @@ fn framework() -> Result<Framework<State>> {
     .build()
 }
 
-fn interaction_event(mode: &str, format: &str, level: Option<i64>) -> GatewayEvent {
+fn interaction_event(mode: &str, ratio: f64, format: &str, level: Option<i64>) -> GatewayEvent {
     let mut options = vec![
         serde_json::json!({"name": "mode", "type": 3, "value": mode}),
+        serde_json::json!({"name": "ratio", "type": 10, "value": ratio}),
         serde_json::json!({"name": "format", "type": 3, "value": format}),
     ];
     if let Some(level) = level {
