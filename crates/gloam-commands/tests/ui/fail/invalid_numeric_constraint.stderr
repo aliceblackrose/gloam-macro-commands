@@ -1,0 +1,5 @@
+error: `#[min = ...]` and `#[max = ...]` are only supported for `i64` and `f64` options
+  --> tests/ui/fail/invalid_numeric_constraint.rs:11:13
+   |
+11 |     #[min = 1]
+   |             ^
