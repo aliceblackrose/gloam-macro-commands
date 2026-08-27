@@ -1,0 +1,9 @@
+error: Discord slash commands support at most `command -> subcommand group -> subcommand`
+  --> tests/ui/fail/group_too_deep.rs:15:9
+   |
+15 | /         #[group(description = "Advanced configuration")]
+16 | |         mod advanced {
+17 | |             use super::{Context, Result, State, command};
+...  |
+23 | |         }
+   | |_________^

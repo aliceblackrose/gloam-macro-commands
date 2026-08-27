@@ -23,7 +23,7 @@ pub use context::Context;
 pub use dispatch::{CommandTask, DispatchOutcome};
 pub use error::{Error, Result};
 pub use framework::{DEFAULT_MAX_CONCURRENT_COMMANDS, Framework, FrameworkBuilder};
-pub use gloam_commands_macros::{command, commands};
+pub use gloam_commands_macros::{command, commands, group};
 pub use options::{CommandOption, CommandOptions};
 pub use registration::Registration;
 pub use registry::CommandRegistry;
@@ -31,5 +31,7 @@ pub use runtime::Runtime;
 
 /// Common imports for applications using the framework.
 pub mod prelude {
-    pub use crate::{Context, DispatchOutcome, Framework, Registration, Result, command, commands};
+    pub use crate::{
+        Context, DispatchOutcome, Framework, Registration, Result, command, commands, group,
+    };
 }

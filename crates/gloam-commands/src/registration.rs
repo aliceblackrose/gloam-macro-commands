@@ -1,10 +1,13 @@
 use gloamwire::{
     RestClient,
     http::{BulkOverwriteApplicationCommand, CreateApplicationCommand},
-    model::{ApplicationCommand, ApplicationCommandOption, ApplicationId, GuildId},
+    model::{
+        ApplicationCommand, ApplicationCommandOption, ApplicationCommandOptionType, ApplicationId,
+        GuildId,
+    },
 };
 
-use crate::{CommandDescriptor, CommandOptionDescriptor, CommandRegistry, Result};
+use crate::{CommandOptionDescriptor, CommandRegistry, Result, SlashCommand};
 
 /// Discord destination used when synchronizing the local slash-command registry.
 ///
@@ -49,19 +52,86 @@ impl Registration {
 }
 
 fn create_commands<D>(registry: &CommandRegistry<D>) -> Vec<CreateApplicationCommand> {
-    registry
-        .iter()
-        .map(|command| create_command(command.descriptor()))
-        .collect()
+    registry.iter().map(create_command).collect()
 }
 
-fn create_command(descriptor: &CommandDescriptor) -> CreateApplicationCommand {
-    let mut command = CreateApplicationCommand::chat_input(descriptor.name, descriptor.description);
-    command.options = descriptor.options.iter().map(create_option).collect();
-    command
+fn create_command<D>(command: &SlashCommand<D>) -> CreateApplicationCommand {
+    let descriptor = command.descriptor();
+    let mut create = CreateApplicationCommand::chat_input(descriptor.name, descriptor.description);
+    create.options = if command.is_leaf() {
+        descriptor
+            .options
+            .iter()
+            .map(create_scalar_option)
+            .collect()
+    } else {
+        command.children().iter().map(create_child_option).collect()
+    };
+    create
 }
 
-fn create_option(descriptor: &CommandOptionDescriptor) -> ApplicationCommandOption {
+fn create_child_option<D>(command: &SlashCommand<D>) -> ApplicationCommandOption {
+    if command.is_leaf() {
+        create_hierarchy_option(
+            command,
+            ApplicationCommandOptionType::SUB_COMMAND,
+            command
+                .descriptor()
+                .options
+                .iter()
+                .map(create_scalar_option)
+                .collect(),
+        )
+    } else {
+        create_hierarchy_option(
+            command,
+            ApplicationCommandOptionType::SUB_COMMAND_GROUP,
+            command
+                .children()
+                .iter()
+                .map(|child| {
+                    create_hierarchy_option(
+                        child,
+                        ApplicationCommandOptionType::SUB_COMMAND,
+                        child
+                            .descriptor()
+                            .options
+                            .iter()
+                            .map(create_scalar_option)
+                            .collect(),
+                    )
+                })
+                .collect(),
+        )
+    }
+}
+
+fn create_hierarchy_option<D>(
+    command: &SlashCommand<D>,
+    kind: ApplicationCommandOptionType,
+    options: Vec<ApplicationCommandOption>,
+) -> ApplicationCommandOption {
+    let descriptor = command.descriptor();
+    ApplicationCommandOption {
+        kind,
+        name: descriptor.name.to_owned(),
+        name_localizations: None,
+        description: descriptor.description.to_owned(),
+        description_localizations: None,
+        required: None,
+        choices: Vec::new(),
+        options,
+        channel_types: Vec::new(),
+        min_value: None,
+        max_value: None,
+        min_length: None,
+        max_length: None,
+        autocomplete: None,
+        file_types: Vec::new(),
+    }
+}
+
+fn create_scalar_option(descriptor: &CommandOptionDescriptor) -> ApplicationCommandOption {
     ApplicationCommandOption {
         kind: descriptor.kind,
         name: descriptor.name.to_owned(),
@@ -112,6 +182,10 @@ mod tests {
     static QUERY: CommandDescriptor =
         CommandDescriptor::new("query", "Search for results").with_options(QUERY_OPTIONS);
     static ALPHA: CommandDescriptor = CommandDescriptor::new("alpha", "Alphabetical first");
+    static ADMIN: CommandDescriptor = CommandDescriptor::new("admin", "Administration commands");
+    static BAN: CommandDescriptor = CommandDescriptor::new("ban", "Ban a member");
+    static CONFIG: CommandDescriptor = CommandDescriptor::new("config", "Configuration commands");
+    static SET: CommandDescriptor = CommandDescriptor::new("set", "Set configuration");
 
     fn handler(_ctx: Context<()>) -> crate::CommandFuture {
         Box::pin(async { Ok(()) })
@@ -160,6 +234,41 @@ mod tests {
         assert_eq!(query.required, Some(false));
         assert_eq!(query.min_length, Some(2));
         assert_eq!(query.max_length, Some(100));
+        Ok(())
+    }
+
+    #[test]
+    fn converts_native_subcommands_and_groups() -> Result<()> {
+        let mut registry = CommandRegistry::new();
+        registry.insert(SlashCommand::group(
+            &ADMIN,
+            vec![
+                SlashCommand::new(&BAN, handler),
+                SlashCommand::group(&CONFIG, vec![SlashCommand::new(&SET, handler)]),
+            ],
+        ))?;
+
+        let commands = create_commands(&registry);
+        let admin = &commands[0];
+
+        assert_eq!(admin.options.len(), 2);
+        assert_eq!(admin.options[0].name, "ban");
+        assert_eq!(
+            admin.options[0].kind,
+            ApplicationCommandOptionType::SUB_COMMAND
+        );
+        assert_eq!(admin.options[0].required, None);
+        assert_eq!(admin.options[1].name, "config");
+        assert_eq!(
+            admin.options[1].kind,
+            ApplicationCommandOptionType::SUB_COMMAND_GROUP
+        );
+        assert_eq!(admin.options[1].options.len(), 1);
+        assert_eq!(admin.options[1].options[0].name, "set");
+        assert_eq!(
+            admin.options[1].options[0].kind,
+            ApplicationCommandOptionType::SUB_COMMAND
+        );
         Ok(())
     }
 }

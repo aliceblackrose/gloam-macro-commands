@@ -1,0 +1,5 @@
+error: slash-command groups require `description = "..."`
+ --> tests/ui/fail/group_missing_description.rs:8:5
+  |
+8 | mod admin {
+  |     ^^^^^

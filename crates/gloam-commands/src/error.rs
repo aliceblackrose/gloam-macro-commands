@@ -8,6 +8,18 @@ pub enum Error {
     #[error("duplicate slash command `{0}`")]
     DuplicateCommand(&'static str),
 
+    /// A nested command path was registered more than once.
+    #[error("duplicate slash-command path `{0}`")]
+    DuplicateCommandPath(String),
+
+    /// A command tree exceeded Discord's native hierarchy or mixed invalid node types.
+    #[error("invalid slash-command hierarchy at `{0}`")]
+    InvalidCommandHierarchy(String),
+
+    /// A received interaction did not resolve to a registered command path.
+    #[error("unknown slash-command path `{0}`")]
+    UnknownCommandPath(String),
+
     /// The configured global command-concurrency limit was zero.
     #[error("max concurrent commands must be greater than zero")]
     InvalidConcurrencyLimit,

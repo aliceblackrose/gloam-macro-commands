@@ -151,7 +151,7 @@ pub(crate) fn expand(attribute: TokenStream, item: TokenStream) -> Result<TokenS
         quote! {
             ::std::boxed::Box::pin(async move {
                 let (#(#option_idents,)*) = {
-                    let options = ::gloam_commands::CommandOptions::new(ctx.command_data());
+                    let options = ctx.command_options();
                     (#(
                         <#option_types as ::gloam_commands::CommandOption>::extract(
                             &options,
@@ -749,7 +749,7 @@ fn validate_return_type(output: &ReturnType) -> Result<()> {
     Ok(())
 }
 
-fn context_type(function: &ItemFn) -> Result<&Type> {
+pub(crate) fn context_type(function: &ItemFn) -> Result<&Type> {
     let Some(argument) = function.sig.inputs.first() else {
         return Err(Error::new(
             function.sig.ident.span(),
@@ -783,7 +783,7 @@ fn context_type(function: &ItemFn) -> Result<&Type> {
     Ok(argument.ty.as_ref())
 }
 
-fn state_type(context_type: &Type) -> Result<&Type> {
+pub(crate) fn state_type(context_type: &Type) -> Result<&Type> {
     let Type::Path(context) = context_type else {
         unreachable!("context_type validates Type::Path");
     };
@@ -813,7 +813,7 @@ fn state_type(context_type: &Type) -> Result<&Type> {
     Ok(state_type)
 }
 
-fn validate_name(name: &LitStr) -> Result<()> {
+pub(crate) fn validate_name(name: &LitStr) -> Result<()> {
     let value = name.value();
     if !COMMAND_NAME.is_match(&value) {
         return Err(Error::new(
@@ -830,7 +830,7 @@ fn validate_name(name: &LitStr) -> Result<()> {
     Ok(())
 }
 
-fn validate_description(description: &LitStr) -> Result<()> {
+pub(crate) fn validate_description(description: &LitStr) -> Result<()> {
     let length = description.value().chars().count();
     if !(1..=100).contains(&length) {
         return Err(Error::new(

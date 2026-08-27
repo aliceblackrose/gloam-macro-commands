@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{Error, Result, SlashCommand};
 
@@ -16,8 +16,10 @@ impl<D> CommandRegistry<D> {
         }
     }
 
-    /// Inserts a slash command, rejecting duplicate command names.
+    /// Inserts a slash command, rejecting duplicate or invalid command paths.
     pub fn insert(&mut self, command: SlashCommand<D>) -> Result<()> {
+        validate_hierarchy(&command)?;
+
         let name = command.descriptor().name;
         if self.commands.contains_key(name) {
             return Err(Error::DuplicateCommand(name));
@@ -57,12 +59,71 @@ impl<D> Default for CommandRegistry<D> {
     }
 }
 
+fn validate_hierarchy<D>(command: &SlashCommand<D>) -> Result<()> {
+    let root = command.descriptor().name;
+    if command.is_leaf() {
+        return Ok(());
+    }
+    if !command.descriptor().options.is_empty() || command.children().is_empty() {
+        return Err(Error::InvalidCommandHierarchy(root.to_owned()));
+    }
+
+    validate_children(command.children(), &[root], 1)
+}
+
+fn validate_children<D>(
+    children: &[SlashCommand<D>],
+    parent_path: &[&'static str],
+    depth: usize,
+) -> Result<()> {
+    let mut names = BTreeSet::new();
+
+    for child in children {
+        let name = child.descriptor().name;
+        let path = format_path(parent_path, name);
+        if !names.insert(name) {
+            return Err(Error::DuplicateCommandPath(path));
+        }
+
+        if child.is_leaf() {
+            continue;
+        }
+
+        if depth >= 2 || !child.descriptor().options.is_empty() || child.children().is_empty() {
+            return Err(Error::InvalidCommandHierarchy(path));
+        }
+        if child.children().iter().any(SlashCommand::is_group) {
+            return Err(Error::InvalidCommandHierarchy(path));
+        }
+
+        let mut nested_path = parent_path.to_vec();
+        nested_path.push(name);
+        validate_children(child.children(), &nested_path, depth + 1)?;
+    }
+
+    Ok(())
+}
+
+fn format_path(parent: &[&str], child: &str) -> String {
+    let mut path = parent.join(" ");
+    if !path.is_empty() {
+        path.push(' ');
+    }
+    path.push_str(child);
+    path
+}
+
 #[cfg(test)]
 mod tests {
     use super::CommandRegistry;
-    use crate::{CommandDescriptor, Context, Result, SlashCommand};
+    use crate::{CommandDescriptor, Context, Error, Result, SlashCommand};
 
     static PING: CommandDescriptor = CommandDescriptor::new("ping", "Check bot responsiveness");
+    static ADMIN: CommandDescriptor = CommandDescriptor::new("admin", "Administration commands");
+    static BAN: CommandDescriptor = CommandDescriptor::new("ban", "Ban a member");
+    static CONFIG: CommandDescriptor = CommandDescriptor::new("config", "Configuration commands");
+    static SET: CommandDescriptor = CommandDescriptor::new("set", "Set configuration");
+    static DEEPER: CommandDescriptor = CommandDescriptor::new("deeper", "Too deeply nested");
 
     fn handler(_ctx: Context<()>) -> crate::CommandFuture {
         Box::pin(async { Ok(()) })
@@ -89,5 +150,56 @@ mod tests {
         );
         assert!(registry.get("missing").is_none());
         Ok(())
+    }
+
+    #[test]
+    fn accepts_discord_native_group_hierarchy() -> Result<()> {
+        let command = SlashCommand::group(
+            &ADMIN,
+            vec![
+                SlashCommand::new(&BAN, handler),
+                SlashCommand::group(&CONFIG, vec![SlashCommand::new(&SET, handler)]),
+            ],
+        );
+        let mut registry = CommandRegistry::new();
+        registry.insert(command)?;
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_duplicate_nested_paths() {
+        let command = SlashCommand::group(
+            &ADMIN,
+            vec![
+                SlashCommand::new(&BAN, handler),
+                SlashCommand::new(&BAN, handler),
+            ],
+        );
+        let mut registry = CommandRegistry::new();
+
+        assert!(matches!(
+            registry.insert(command),
+            Err(Error::DuplicateCommandPath(path)) if path == "admin ban"
+        ));
+    }
+
+    #[test]
+    fn rejects_hierarchy_deeper_than_discord_supports() {
+        let command = SlashCommand::group(
+            &ADMIN,
+            vec![SlashCommand::group(
+                &CONFIG,
+                vec![SlashCommand::group(
+                    &DEEPER,
+                    vec![SlashCommand::new(&SET, handler)],
+                )],
+            )],
+        );
+        let mut registry = CommandRegistry::new();
+
+        assert!(matches!(
+            registry.insert(command),
+            Err(Error::InvalidCommandHierarchy(path)) if path == "admin config"
+        ));
     }
 }
