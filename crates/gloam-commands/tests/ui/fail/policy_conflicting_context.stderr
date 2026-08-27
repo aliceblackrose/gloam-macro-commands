@@ -1,0 +1,5 @@
+error: `guild_only` cannot be combined with explicit `context = ...` arguments
+ --> tests/ui/fail/policy_conflicting_context.rs:7:48
+  |
+7 | #[command(description = "Conflicting context", guild_only, context = "guild")]
+  |                                                ^^^^^^^^^^
