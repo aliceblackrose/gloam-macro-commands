@@ -105,19 +105,19 @@ impl CommandOptionDescriptor {
     }
 }
 
-/// Static metadata describing a Discord chat-input command.
+/// Static metadata describing a Discord chat-input command or group node.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CommandDescriptor {
-    /// Command name registered with Discord.
+    /// Command or group name registered with Discord.
     pub name: &'static str,
-    /// Human-readable command description registered with Discord.
+    /// Human-readable description registered with Discord.
     pub description: &'static str,
-    /// Command options generated from the Rust handler signature.
+    /// Scalar options generated from a leaf handler signature.
     pub options: &'static [CommandOptionDescriptor],
 }
 
 impl CommandDescriptor {
-    /// Creates a command descriptor without options.
+    /// Creates a command descriptor without scalar options.
     #[must_use]
     pub const fn new(name: &'static str, description: &'static str) -> Self {
         Self {
@@ -127,7 +127,7 @@ impl CommandDescriptor {
         }
     }
 
-    /// Attaches generated command-option descriptors.
+    /// Attaches generated scalar command-option descriptors.
     #[must_use]
     pub const fn with_options(mut self, options: &'static [CommandOptionDescriptor]) -> Self {
         self.options = options;
@@ -135,31 +135,73 @@ impl CommandDescriptor {
     }
 }
 
-/// Registered slash command and its generated handler adapter.
+enum SlashCommandKind<D> {
+    Leaf(CommandHandler<D>),
+    Group(Vec<SlashCommand<D>>),
+}
+
+/// One node in the registered Discord chat-input command tree.
+///
+/// A top-level node can be a leaf command or a group. A group may contain leaf
+/// subcommands and one additional level of subcommand groups, matching Discord's
+/// native hierarchy.
 pub struct SlashCommand<D> {
     descriptor: &'static CommandDescriptor,
-    handler: CommandHandler<D>,
+    kind: SlashCommandKind<D>,
 }
 
 impl<D> SlashCommand<D> {
-    /// Creates a slash command from static metadata and an erased handler.
+    /// Creates a leaf slash command from static metadata and an erased handler.
     #[must_use]
     pub const fn new(descriptor: &'static CommandDescriptor, handler: CommandHandler<D>) -> Self {
         Self {
             descriptor,
-            handler,
+            kind: SlashCommandKind::Leaf(handler),
         }
     }
 
-    /// Returns the static command descriptor.
+    /// Creates a group node containing child commands.
+    #[must_use]
+    pub fn group(descriptor: &'static CommandDescriptor, children: Vec<Self>) -> Self {
+        Self {
+            descriptor,
+            kind: SlashCommandKind::Group(children),
+        }
+    }
+
+    /// Returns the static node descriptor.
     #[must_use]
     pub const fn descriptor(&self) -> &'static CommandDescriptor {
         self.descriptor
     }
 
-    /// Returns the erased command handler.
+    /// Returns the erased handler when this node is a leaf command.
     #[must_use]
-    pub const fn handler(&self) -> CommandHandler<D> {
-        self.handler
+    pub const fn handler(&self) -> Option<CommandHandler<D>> {
+        match &self.kind {
+            SlashCommandKind::Leaf(handler) => Some(*handler),
+            SlashCommandKind::Group(_) => None,
+        }
+    }
+
+    /// Returns child nodes when this node is a group.
+    #[must_use]
+    pub fn children(&self) -> &[Self] {
+        match &self.kind {
+            SlashCommandKind::Leaf(_) => &[],
+            SlashCommandKind::Group(children) => children,
+        }
+    }
+
+    /// Returns whether this node is a leaf command.
+    #[must_use]
+    pub const fn is_leaf(&self) -> bool {
+        matches!(self.kind, SlashCommandKind::Leaf(_))
+    }
+
+    /// Returns whether this node is a group.
+    #[must_use]
+    pub const fn is_group(&self) -> bool {
+        matches!(self.kind, SlashCommandKind::Group(_))
     }
 }
