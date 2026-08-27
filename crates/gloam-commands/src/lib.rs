@@ -30,7 +30,7 @@ pub use context::Context;
 pub use dispatch::{CommandTask, DispatchOutcome};
 pub use error::{Error, Result};
 pub use framework::{DEFAULT_MAX_CONCURRENT_COMMANDS, Framework, FrameworkBuilder};
-pub use gloam_commands_macros::{CommandChoice, autocomplete, command, commands, group};
+pub use gloam_commands_macros::{CommandChoice, autocomplete, check, command, commands, group};
 pub use options::{CommandChoice, CommandOption, CommandOptions};
 pub use policy::{CheckDescriptor, CheckFuture, CheckHandler, CommandPolicy};
 pub use registration::Registration;
@@ -47,7 +47,7 @@ pub mod __private {
 pub mod prelude {
     pub use crate::{
         AutocompleteChoice, AutocompleteContext, CheckDescriptor, CommandChoice, CommandPolicy,
-        Context, DispatchOutcome, Framework, Registration, Result, autocomplete, command, commands,
-        group,
+        Context, DispatchOutcome, Framework, Registration, Result, autocomplete, check, command,
+        commands, group,
     };
 }
