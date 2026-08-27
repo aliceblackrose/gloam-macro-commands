@@ -5,9 +5,12 @@ use gloamwire::{
     gateway::{
         GatewayEvent, GatewayIntents, ShardEvent, ShardId, ShardManager, TypedDispatchEvent,
     },
+    http::CreateInteractionResponseQuery,
     model::{
-        ApplicationCommandInteractionDataOption, ApplicationCommandOptionType,
-        ApplicationCommandType, ApplicationId, InteractionType,
+        ApplicationCommandChoiceValue, ApplicationCommandInteractionDataOption,
+        ApplicationCommandOptionChoice, ApplicationCommandOptionType, ApplicationCommandType,
+        ApplicationId, AutocompleteInteractionCallbackData, InteractionCallbackData,
+        InteractionCallbackType, InteractionResponse, InteractionType,
     },
 };
 use tokio::{
@@ -17,12 +20,21 @@ use tokio::{
 };
 
 use crate::{
+    AutocompleteChoice, AutocompleteChoiceValue, AutocompleteContext, AutocompleteHandler,
     CommandFuture, CommandHandler, CommandRegistry, CommandTask, Context, DispatchOutcome, Error,
     Registration, Result, Runtime, SlashCommand,
 };
 
 /// Default upper bound for simultaneously executing command handlers.
 pub const DEFAULT_MAX_CONCURRENT_COMMANDS: usize = 64;
+
+const MAX_AUTOCOMPLETE_CHOICES: usize = 25;
+const MAX_AUTOCOMPLETE_NAME_LENGTH: usize = 100;
+const MAX_AUTOCOMPLETE_STRING_LENGTH: usize = 100;
+const MIN_AUTOCOMPLETE_INTEGER_VALUE: i64 = -9_007_199_254_740_991;
+const MAX_AUTOCOMPLETE_INTEGER_VALUE: i64 = 9_007_199_254_740_991;
+const MIN_AUTOCOMPLETE_NUMBER_VALUE: f64 = -9_007_199_254_740_992.0;
+const MAX_AUTOCOMPLETE_NUMBER_VALUE: f64 = 9_007_199_254_740_992.0;
 
 /// Configured slash-command framework.
 pub struct Framework<D> {
@@ -144,6 +156,18 @@ where
                     handle,
                 )))
             }
+            PreparedDispatch::Autocomplete(autocomplete) => {
+                let runtime = Handle::try_current().map_err(|_| Error::NoAsyncRuntime)?;
+                let command_name = autocomplete.command_name;
+                let Some(future) = autocomplete.try_execute()? else {
+                    return Ok(DispatchOutcome::AtCapacity { name: command_name });
+                };
+                let handle = runtime.spawn(future);
+                Ok(DispatchOutcome::Spawned(CommandTask::new(
+                    command_name,
+                    handle,
+                )))
+            }
         }
     }
 
@@ -163,10 +187,13 @@ where
         let TypedDispatchEvent::InteractionCreate(interaction) = dispatch.typed()? else {
             return Ok(PreparedDispatch::Ignored);
         };
-        if interaction.kind != InteractionType::APPLICATION_COMMAND {
+        if interaction.kind != InteractionType::APPLICATION_COMMAND
+            && interaction.kind != InteractionType::APPLICATION_COMMAND_AUTOCOMPLETE
+        {
             return Ok(PreparedDispatch::Ignored);
         }
 
+        let interaction_kind = interaction.kind;
         let command_data = interaction
             .application_command_data()?
             .ok_or(Error::MissingApplicationCommandData)?;
@@ -179,15 +206,55 @@ where
         };
         let resolved = resolve_command(command, &command_data.options)?;
         let descriptor = resolved.command.descriptor();
+        let runtime = Arc::new(self.runtime(rest.clone()));
+        let interaction = Arc::from(interaction);
+        let command_data = Arc::new(command_data);
+
+        if interaction_kind == InteractionType::APPLICATION_COMMAND_AUTOCOMPLETE {
+            let focused_index = focused_option_index(&resolved.options, &resolved.path)?;
+            let focused = &resolved.options[focused_index];
+            let Some(option_descriptor) = descriptor.options.iter().find(|option| {
+                option.name == focused.name && option.kind == focused.kind && option.autocomplete
+            }) else {
+                return Err(Error::UnknownAutocompleteOption {
+                    path: resolved.path.join(" "),
+                    option: focused.name.clone(),
+                });
+            };
+            let handler = resolved
+                .command
+                .autocomplete_handler(option_descriptor.name)
+                .ok_or_else(|| Error::UnknownAutocompleteOption {
+                    path: resolved.path.join(" "),
+                    option: focused.name.clone(),
+                })?;
+            let context = AutocompleteContext::new(
+                runtime,
+                interaction,
+                command_data,
+                resolved.path,
+                resolved.options,
+                focused_index,
+                shard_id,
+            );
+
+            return Ok(PreparedDispatch::Autocomplete(PreparedAutocomplete {
+                command_name: descriptor.name,
+                option_kind: option_descriptor.kind,
+                handler,
+                context,
+                command_slots: Arc::clone(&self.command_slots),
+            }));
+        }
+
         let handler = resolved
             .command
             .handler()
             .ok_or_else(|| Error::UnknownCommandPath(resolved.path.join(" ")))?;
-        let runtime = Arc::new(self.runtime(rest.clone()));
         let context = Context::new(
             runtime,
-            Arc::from(interaction),
-            Arc::new(command_data),
+            interaction,
+            command_data,
             resolved.path,
             resolved.options,
             shard_id,
@@ -214,11 +281,18 @@ where
                 synchronized = true;
             }
 
-            if let PreparedDispatch::Command(command) =
-                self.prepare_dispatch(rest, &event.event, Some(event.shard_id))?
-                && let Some(future) = command.try_execute()?
-            {
-                commands.spawn(future);
+            match self.prepare_dispatch(rest, &event.event, Some(event.shard_id))? {
+                PreparedDispatch::Command(command) => {
+                    if let Some(future) = command.try_execute()? {
+                        commands.spawn(future);
+                    }
+                }
+                PreparedDispatch::Autocomplete(autocomplete) => {
+                    if let Some(future) = autocomplete.try_execute()? {
+                        commands.spawn(future);
+                    }
+                }
+                PreparedDispatch::Ignored | PreparedDispatch::Unregistered(_) => {}
             }
         }
 
@@ -377,6 +451,23 @@ fn only_branch<'a>(
     Ok(&submitted[0])
 }
 
+fn focused_option_index(
+    options: &[ApplicationCommandInteractionDataOption],
+    path: &[&str],
+) -> Result<usize> {
+    let mut focused = options
+        .iter()
+        .enumerate()
+        .filter(|(_, option)| option.focused == Some(true));
+    let Some((index, _)) = focused.next() else {
+        return Err(Error::InvalidAutocompleteFocus(path.join(" ")));
+    };
+    if focused.next().is_some() {
+        return Err(Error::InvalidAutocompleteFocus(path.join(" ")));
+    }
+    Ok(index)
+}
+
 struct PreparedCommand<D> {
     command_name: &'static str,
     handler: CommandHandler<D>,
@@ -408,10 +499,144 @@ where
     }
 }
 
+struct PreparedAutocomplete<D> {
+    command_name: &'static str,
+    option_kind: ApplicationCommandOptionType,
+    handler: AutocompleteHandler<D>,
+    context: AutocompleteContext<D>,
+    command_slots: Arc<Semaphore>,
+}
+
+impl<D> PreparedAutocomplete<D>
+where
+    D: Send + Sync + 'static,
+{
+    fn try_execute(self) -> Result<Option<CommandFuture>> {
+        let Self {
+            option_kind,
+            handler,
+            context,
+            command_slots,
+            ..
+        } = self;
+        let permit = match command_slots.try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(TryAcquireError::NoPermits) => return Ok(None),
+            Err(TryAcquireError::Closed) => return Err(Error::CommandSchedulerClosed),
+        };
+
+        Ok(Some(Box::pin(async move {
+            let _permit = permit;
+            execute_autocomplete(option_kind, handler, context).await
+        })))
+    }
+}
+
+async fn execute_autocomplete<D>(
+    option_kind: ApplicationCommandOptionType,
+    handler: AutocompleteHandler<D>,
+    context: AutocompleteContext<D>,
+) -> Result<()>
+where
+    D: Send + Sync + 'static,
+{
+    let rest = context.rest().clone();
+    let interaction_id = context.interaction().id;
+    let interaction_token = context.interaction().token.clone();
+    let choices = (handler)(context).await?;
+    let choices = autocomplete_response_choices(option_kind, choices)?;
+    let response = InteractionResponse {
+        kind: InteractionCallbackType::APPLICATION_COMMAND_AUTOCOMPLETE_RESULT,
+        data: Some(InteractionCallbackData::Autocomplete(
+            AutocompleteInteractionCallbackData { choices },
+        )),
+    };
+
+    rest.create_interaction_response(
+        interaction_id,
+        &interaction_token,
+        &response,
+        &CreateInteractionResponseQuery::default(),
+    )
+    .await?;
+    Ok(())
+}
+
+fn autocomplete_response_choices(
+    option_kind: ApplicationCommandOptionType,
+    choices: Vec<AutocompleteChoice>,
+) -> Result<Vec<ApplicationCommandOptionChoice>> {
+    if choices.len() > MAX_AUTOCOMPLETE_CHOICES {
+        return Err(Error::InvalidAutocompleteResponse(format!(
+            "handlers may return at most {MAX_AUTOCOMPLETE_CHOICES} choices"
+        )));
+    }
+
+    choices
+        .into_iter()
+        .map(|choice| autocomplete_response_choice(option_kind, choice))
+        .collect()
+}
+
+fn autocomplete_response_choice(
+    option_kind: ApplicationCommandOptionType,
+    choice: AutocompleteChoice,
+) -> Result<ApplicationCommandOptionChoice> {
+    let name_length = choice.name.chars().count();
+    if name_length == 0 || name_length > MAX_AUTOCOMPLETE_NAME_LENGTH {
+        return Err(Error::InvalidAutocompleteResponse(format!(
+            "choice names must contain 1 to {MAX_AUTOCOMPLETE_NAME_LENGTH} characters"
+        )));
+    }
+
+    let value = match (option_kind, choice.value) {
+        (ApplicationCommandOptionType::STRING, AutocompleteChoiceValue::String(value)) => {
+            let value_length = value.chars().count();
+            if value_length == 0 || value_length > MAX_AUTOCOMPLETE_STRING_LENGTH {
+                return Err(Error::InvalidAutocompleteResponse(format!(
+                    "string choice values must contain 1 to {MAX_AUTOCOMPLETE_STRING_LENGTH} characters"
+                )));
+            }
+            ApplicationCommandChoiceValue::String(value)
+        }
+        (ApplicationCommandOptionType::INTEGER, AutocompleteChoiceValue::Integer(value)) => {
+            if !(MIN_AUTOCOMPLETE_INTEGER_VALUE..=MAX_AUTOCOMPLETE_INTEGER_VALUE).contains(&value) {
+                return Err(Error::InvalidAutocompleteResponse(
+                    "integer choice values must be within Discord's safe integer range".to_owned(),
+                ));
+            }
+            ApplicationCommandChoiceValue::Integer(value)
+        }
+        (ApplicationCommandOptionType::NUMBER, AutocompleteChoiceValue::Number(value)) => {
+            if !value.is_finite()
+                || !(MIN_AUTOCOMPLETE_NUMBER_VALUE..=MAX_AUTOCOMPLETE_NUMBER_VALUE).contains(&value)
+            {
+                return Err(Error::InvalidAutocompleteResponse(
+                    "number choice values must be finite and within Discord's numeric range"
+                        .to_owned(),
+                ));
+            }
+            ApplicationCommandChoiceValue::Number(value)
+        }
+        _ => {
+            return Err(Error::InvalidAutocompleteResponse(
+                "choice value type does not match the focused option type".to_owned(),
+            ));
+        }
+    };
+
+    Ok(ApplicationCommandOptionChoice {
+        name: choice.name,
+        name_localizations: None,
+        value,
+    })
+}
+
 enum PreparedDispatch<D> {
     Ignored,
     Unregistered(String),
     Command(PreparedCommand<D>),
+    Autocomplete(PreparedAutocomplete<D>),
 }
 
 fn ready_application_id(event: &GatewayEvent) -> Result<Option<ApplicationId>> {
