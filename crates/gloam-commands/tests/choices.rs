@@ -108,10 +108,8 @@ async fn dispatch_extracts_choice_enums_before_invoking_handler() -> Result<()> 
     let framework = framework()?;
     let rest = RestClient::new("test-token")?;
 
-    let task = spawned(framework.dispatch(
-        &rest,
-        &interaction_event("safe", 0.5, "json", Some(2)),
-    )?);
+    let task =
+        spawned(framework.dispatch(&rest, &interaction_event("safe", 0.5, "json", Some(2)))?);
     task.join().await?;
 
     assert_eq!(
@@ -136,10 +134,7 @@ async fn optional_choice_enum_allows_missing_option() -> Result<()> {
     let framework = framework()?;
     let rest = RestClient::new("test-token")?;
 
-    let task = spawned(framework.dispatch(
-        &rest,
-        &interaction_event("fast", 1.0, "text", None),
-    )?);
+    let task = spawned(framework.dispatch(&rest, &interaction_event("fast", 1.0, "text", None))?);
     task.join().await?;
 
     assert_eq!(
@@ -159,13 +154,10 @@ async fn rejects_unregistered_typed_choice_value() -> Result<()> {
     let framework = framework()?;
     let rest = RestClient::new("test-token")?;
 
-    let error = spawned(framework.dispatch(
-        &rest,
-        &interaction_event("turbo", 0.5, "text", None),
-    )?)
-    .join()
-    .await
-    .expect_err("unknown typed choice must fail extraction");
+    let error = spawned(framework.dispatch(&rest, &interaction_event("turbo", 0.5, "text", None))?)
+        .join()
+        .await
+        .expect_err("unknown typed choice must fail extraction");
 
     assert!(matches!(error, Error::InvalidChoice { name: "mode" }));
     assert!(
