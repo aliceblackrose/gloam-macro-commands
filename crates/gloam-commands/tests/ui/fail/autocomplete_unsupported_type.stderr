@@ -1,0 +1,5 @@
+error: autocomplete is only supported for `String`, `i64`, and `f64` options
+  --> tests/ui/fail/autocomplete_unsupported_type.rs:19:5
+   |
+19 |     enabled: bool,
+   |     ^^^^^^^

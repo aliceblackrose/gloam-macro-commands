@@ -175,16 +175,18 @@ Add static slash-command choices without falling back to untyped strings.
 
 ## Phase 9 — Autocomplete
 
+**Status:** Complete
+
 Support Discord application-command autocomplete as a first-class interaction path.
 
-- [ ] Add `#[autocomplete]` handlers.
-- [ ] Add `AutocompleteContext<D>` only if autocomplete-specific semantics justify a distinct type.
-- [ ] Route autocomplete interactions separately from command execution.
-- [ ] Expose the focused option and current partial value.
-- [ ] Allow command options to reference autocomplete handlers.
-- [ ] Validate autocomplete compatibility with the option type.
-- [ ] Convert framework choices into Discord autocomplete responses.
-- [ ] Enforce Discord result limits.
+- [x] Add `#[autocomplete]` handlers.
+- [x] Add `AutocompleteContext<D>` only if autocomplete-specific semantics justify a distinct type.
+- [x] Route autocomplete interactions separately from command execution.
+- [x] Expose the focused option and current partial value.
+- [x] Allow command options to reference autocomplete handlers.
+- [x] Validate autocomplete compatibility with the option type.
+- [x] Convert framework choices into Discord autocomplete responses.
+- [x] Enforce Discord result limits.
 
 **Exit criteria:** an option can dynamically provide Discord autocomplete results without custom interaction routing.
 

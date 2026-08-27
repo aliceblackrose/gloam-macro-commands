@@ -149,7 +149,7 @@ fn create_scalar_option(descriptor: &CommandOptionDescriptor) -> ApplicationComm
         max_value: descriptor.max_value,
         min_length: descriptor.min_length,
         max_length: descriptor.max_length,
-        autocomplete: None,
+        autocomplete: descriptor.autocomplete.then_some(true),
         file_types: Vec::new(),
     }
 }
@@ -178,6 +178,7 @@ mod tests {
     };
 
     use crate::{
+        AutocompleteContext, AutocompleteFuture, AutocompleteHandlerDescriptor,
         CommandChoiceDescriptor, CommandDescriptor, CommandOptionDescriptor, CommandRegistry,
         Context, Result, SlashCommand,
     };
@@ -204,6 +205,7 @@ mod tests {
             ApplicationCommandOptionType::STRING,
             false,
         )
+        .autocomplete()
         .min_length(2)
         .max_length(100),
     ];
@@ -219,6 +221,10 @@ mod tests {
         Box::pin(async { Ok(()) })
     }
 
+    fn autocomplete_handler(_ctx: AutocompleteContext<()>) -> AutocompleteFuture {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
     #[test]
     fn registration_defaults_to_none() {
         assert_eq!(Registration::default(), Registration::None);
@@ -231,7 +237,14 @@ mod tests {
     #[test]
     fn converts_descriptors_to_gloamwire_payloads_in_registry_order() -> Result<()> {
         let mut registry = CommandRegistry::new();
-        registry.insert(SlashCommand::new(&QUERY, handler))?;
+        registry.insert(SlashCommand::new_with_autocomplete(
+            &QUERY,
+            handler,
+            vec![AutocompleteHandlerDescriptor::new(
+                "query",
+                autocomplete_handler,
+            )],
+        ))?;
         registry.insert(SlashCommand::new(&ALPHA, handler))?;
 
         let commands = create_commands(&registry);
@@ -254,6 +267,7 @@ mod tests {
             count.choices[0].value,
             ApplicationCommandChoiceValue::Integer(1)
         );
+        assert_eq!(count.autocomplete, None);
         assert_eq!(
             count.min_value,
             Some(ApplicationCommandNumericValue::Integer(1))
@@ -266,6 +280,7 @@ mod tests {
         let query = &commands[1].options[1];
         assert_eq!(query.kind, ApplicationCommandOptionType::STRING);
         assert_eq!(query.required, Some(false));
+        assert_eq!(query.autocomplete, Some(true));
         assert_eq!(query.min_length, Some(2));
         assert_eq!(query.max_length, Some(100));
         Ok(())

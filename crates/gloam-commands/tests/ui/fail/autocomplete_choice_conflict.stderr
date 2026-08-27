@@ -1,0 +1,5 @@
+error: autocomplete cannot be combined with static command choices
+  --> tests/ui/fail/autocomplete_choice_conflict.rs:20:5
+   |
+20 |     query: String,
+   |     ^^^^^

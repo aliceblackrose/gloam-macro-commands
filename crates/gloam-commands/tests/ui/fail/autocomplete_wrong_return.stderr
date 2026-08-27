@@ -1,0 +1,5 @@
+error: autocomplete handlers must return `Result<Vec<AutocompleteChoice>>`
+ --> tests/ui/fail/autocomplete_wrong_return.rs:8:56
+  |
+8 | async fn complete(_ctx: AutocompleteContext<State>) -> Result<()> {
+  |                                                        ^^^^^^^^^^

@@ -5,6 +5,7 @@
 
 extern crate self as gloam_commands;
 
+mod autocomplete;
 mod command;
 mod context;
 mod dispatch;
@@ -16,6 +17,10 @@ mod registry;
 mod response;
 mod runtime;
 
+pub use autocomplete::{
+    AutocompleteChoice, AutocompleteChoiceValue, AutocompleteContext, AutocompleteFuture,
+    AutocompleteHandler, AutocompleteHandlerDescriptor,
+};
 pub use command::{
     CommandChoiceDescriptor, CommandChoiceValue, CommandDescriptor, CommandFuture, CommandHandler,
     CommandOptionDescriptor, SlashCommand,
@@ -24,7 +29,7 @@ pub use context::Context;
 pub use dispatch::{CommandTask, DispatchOutcome};
 pub use error::{Error, Result};
 pub use framework::{DEFAULT_MAX_CONCURRENT_COMMANDS, Framework, FrameworkBuilder};
-pub use gloam_commands_macros::{CommandChoice, command, commands, group};
+pub use gloam_commands_macros::{CommandChoice, autocomplete, command, commands, group};
 pub use options::{CommandChoice, CommandOption, CommandOptions};
 pub use registration::Registration;
 pub use registry::CommandRegistry;
@@ -39,7 +44,7 @@ pub mod __private {
 /// Common imports for applications using the framework.
 pub mod prelude {
     pub use crate::{
-        CommandChoice, Context, DispatchOutcome, Framework, Registration, Result, command,
-        commands, group,
+        AutocompleteChoice, AutocompleteContext, CommandChoice, Context, DispatchOutcome,
+        Framework, Registration, Result, autocomplete, command, commands, group,
     };
 }

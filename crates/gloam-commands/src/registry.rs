@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use gloamwire::model::ApplicationCommandOptionType;
+
 use crate::{Error, Result, SlashCommand};
 
 /// Deterministic registry of slash commands keyed by Discord command name.
@@ -8,7 +10,7 @@ pub struct CommandRegistry<D> {
 }
 
 impl<D> CommandRegistry<D> {
-    /// Creates an empty command registry.
+    /// Creates a slash-command registry.
     #[must_use]
     pub const fn new() -> Self {
         Self {
@@ -16,32 +18,30 @@ impl<D> CommandRegistry<D> {
         }
     }
 
-    /// Inserts a slash command, rejecting duplicate or invalid command paths.
+    /// Inserts one command after validating its Discord-native hierarchy.
     pub fn insert(&mut self, command: SlashCommand<D>) -> Result<()> {
         validate_hierarchy(&command)?;
-
         let name = command.descriptor().name;
         if self.commands.contains_key(name) {
             return Err(Error::DuplicateCommand(name));
         }
-
         self.commands.insert(name, command);
         Ok(())
     }
 
-    /// Returns a registered command by Discord command name.
+    /// Resolves one top-level command by registered name.
     #[must_use]
     pub fn get(&self, name: &str) -> Option<&SlashCommand<D>> {
         self.commands.get(name)
     }
 
-    /// Returns the number of registered commands.
+    /// Returns the number of registered top-level commands.
     #[must_use]
     pub fn len(&self) -> usize {
         self.commands.len()
     }
 
-    /// Returns whether no commands are registered.
+    /// Returns whether the registry has no commands.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.commands.is_empty()
@@ -62,7 +62,7 @@ impl<D> Default for CommandRegistry<D> {
 fn validate_hierarchy<D>(command: &SlashCommand<D>) -> Result<()> {
     let root = command.descriptor().name;
     if command.is_leaf() {
-        return Ok(());
+        return validate_leaf(command, root);
     }
     if !command.descriptor().options.is_empty() || command.children().is_empty() {
         return Err(Error::InvalidCommandHierarchy(root.to_owned()));
@@ -86,6 +86,7 @@ fn validate_children<D>(
         }
 
         if child.is_leaf() {
+            validate_leaf(child, &path)?;
             continue;
         }
 
@@ -104,6 +105,50 @@ fn validate_children<D>(
     Ok(())
 }
 
+fn validate_leaf<D>(command: &SlashCommand<D>, path: &str) -> Result<()> {
+    let options = command.descriptor().options;
+    let handlers = command.autocomplete_handlers();
+    let mut handler_names = BTreeSet::new();
+
+    for handler in handlers {
+        let name = handler.option_name();
+        if !handler_names.insert(name) {
+            return Err(Error::InvalidAutocompleteConfiguration(format!(
+                "{path} {name}"
+            )));
+        }
+
+        let Some(option) = options.iter().find(|option| option.name == name) else {
+            return Err(Error::InvalidAutocompleteConfiguration(format!(
+                "{path} {name}"
+            )));
+        };
+        if !option.autocomplete {
+            return Err(Error::InvalidAutocompleteConfiguration(format!(
+                "{path} {name}"
+            )));
+        }
+    }
+
+    for option in options.iter().filter(|option| option.autocomplete) {
+        if !matches!(
+            option.kind,
+            ApplicationCommandOptionType::STRING
+                | ApplicationCommandOptionType::INTEGER
+                | ApplicationCommandOptionType::NUMBER
+        ) || !option.choices.is_empty()
+            || !handler_names.contains(option.name)
+        {
+            return Err(Error::InvalidAutocompleteConfiguration(format!(
+                "{path} {}",
+                option.name
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 fn format_path(parent: &[&str], child: &str) -> String {
     let mut path = parent.join(" ");
     if !path.is_empty() {
@@ -115,8 +160,14 @@ fn format_path(parent: &[&str], child: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use gloamwire::model::ApplicationCommandOptionType;
+
     use super::CommandRegistry;
-    use crate::{CommandDescriptor, Context, Error, Result, SlashCommand};
+    use crate::{
+        AutocompleteContext, AutocompleteFuture, AutocompleteHandlerDescriptor,
+        CommandChoiceDescriptor, CommandDescriptor, CommandOptionDescriptor, Context, Error,
+        Result, SlashCommand,
+    };
 
     static PING: CommandDescriptor = CommandDescriptor::new("ping", "Check bot responsiveness");
     static ADMIN: CommandDescriptor = CommandDescriptor::new("admin", "Administration commands");
@@ -124,9 +175,36 @@ mod tests {
     static CONFIG: CommandDescriptor = CommandDescriptor::new("config", "Configuration commands");
     static SET: CommandDescriptor = CommandDescriptor::new("set", "Set configuration");
     static DEEPER: CommandDescriptor = CommandDescriptor::new("deeper", "Too deeply nested");
+    static SEARCH_OPTIONS: &[CommandOptionDescriptor] = &[CommandOptionDescriptor::new(
+        "query",
+        "Search text",
+        ApplicationCommandOptionType::STRING,
+        true,
+    )
+    .autocomplete()];
+    static SEARCH: CommandDescriptor =
+        CommandDescriptor::new("search", "Search values").with_options(SEARCH_OPTIONS);
+    static INVALID_CHOICES: &[CommandChoiceDescriptor] =
+        &[CommandChoiceDescriptor::string("One", "one")];
+    static INVALID_AUTOCOMPLETE_OPTIONS: &[CommandOptionDescriptor] =
+        &[CommandOptionDescriptor::new(
+            "query",
+            "Search text",
+            ApplicationCommandOptionType::STRING,
+            true,
+        )
+        .with_choices(INVALID_CHOICES)
+        .autocomplete()];
+    static INVALID_AUTOCOMPLETE: CommandDescriptor =
+        CommandDescriptor::new("invalid", "Invalid autocomplete")
+            .with_options(INVALID_AUTOCOMPLETE_OPTIONS);
 
     fn handler(_ctx: Context<()>) -> crate::CommandFuture {
         Box::pin(async { Ok(()) })
+    }
+
+    fn autocomplete_handler(_ctx: AutocompleteContext<()>) -> AutocompleteFuture {
+        Box::pin(async { Ok(Vec::new()) })
     }
 
     #[test]
@@ -164,6 +242,49 @@ mod tests {
         let mut registry = CommandRegistry::new();
         registry.insert(command)?;
         Ok(())
+    }
+
+    #[test]
+    fn accepts_valid_autocomplete_configuration() -> Result<()> {
+        let command = SlashCommand::new_with_autocomplete(
+            &SEARCH,
+            handler,
+            vec![AutocompleteHandlerDescriptor::new(
+                "query",
+                autocomplete_handler,
+            )],
+        );
+        let mut registry = CommandRegistry::new();
+        registry.insert(command)?;
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_autocomplete_without_handler() {
+        let mut registry = CommandRegistry::new();
+
+        assert!(matches!(
+            registry.insert(SlashCommand::new(&SEARCH, handler)),
+            Err(Error::InvalidAutocompleteConfiguration(path)) if path == "search query"
+        ));
+    }
+
+    #[test]
+    fn rejects_autocomplete_with_static_choices() {
+        let command = SlashCommand::new_with_autocomplete(
+            &INVALID_AUTOCOMPLETE,
+            handler,
+            vec![AutocompleteHandlerDescriptor::new(
+                "query",
+                autocomplete_handler,
+            )],
+        );
+        let mut registry = CommandRegistry::new();
+
+        assert!(matches!(
+            registry.insert(command),
+            Err(Error::InvalidAutocompleteConfiguration(path)) if path == "invalid query"
+        ));
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 A focused Discord **slash-command framework** for [Gloamwire](https://github.com/aliceblackrose/gloamwire), written for Rust 1.98 and Edition 2024.
 
-> **Current status:** Phase 8 — choices and typed choice enums.
+> **Current status:** Phase 9 — autocomplete.
 
 The framework is intentionally limited to Discord chat-input application commands. It does **not** implement prefix commands, message-content parsing, or a hybrid prefix/slash command abstraction.
 
@@ -10,16 +10,17 @@ The framework is intentionally limited to Discord chat-input application command
 
 - Generate Discord command metadata from typed Rust handlers.
 - Generate runtime option extraction from the same handler signature.
-- Provide an owned `Context<D>` with shared application state and Gloamwire access.
+- Provide owned command and autocomplete contexts with shared application state and Gloamwire access.
 - Keep Gateway and REST protocol behavior in Gloamwire instead of wrapping it with parallel implementations.
 - Support both a managed runtime and manual dispatch for applications that own their Gateway loop.
 - Keep registration explicit and deterministic.
 - Produce useful compile-time diagnostics for invalid command signatures.
 - Keep command execution from blocking Gateway polling.
-- Bound framework-owned command tasks instead of accumulating unbounded scheduler waiters.
+- Bound framework-owned command and autocomplete tasks instead of accumulating unbounded scheduler waiters.
 - Preserve Discord interaction acknowledgement rules across cloned command contexts.
 - Model Discord-native subcommands and subcommand groups without a parallel nested registry.
 - Keep static choice registration and typed choice extraction derived from one enum definition.
+- Keep dynamic autocomplete registration, dispatch, and response conversion tied to the same option descriptor.
 
 ## Workspace
 
@@ -33,7 +34,7 @@ The proc-macro crate contains no Discord runtime behavior. Generated code target
 
 ## Current API
 
-Typed slash commands can be declared with `#[command]`, composed into Discord-native trees with `#[group]`, synchronized with Discord, respond through `Context<D>`, and execute through the managed Gloamwire shard runtime:
+Typed slash commands can be declared with `#[command]`, composed into Discord-native trees with `#[group]`, dynamically complete eligible options through `#[autocomplete]`, synchronized with Discord, respond through `Context<D>`, and execute through the managed Gloamwire shard runtime:
 
 ```rust,ignore
 use gloam_commands::prelude::*;
@@ -164,6 +165,47 @@ The derive rejects non-unit variants, duplicate names or values, mixed String/nu
 
 Inline choices are supported only for built-in `String`, `i64`, and `f64` options and are likewise validated for count, duplicate names/values, value kind, and Discord ranges. Choice metadata is converted directly into Gloamwire's existing application-command choice model during synchronization; there is no parallel HTTP schema.
 
+### Autocomplete
+
+Dynamic Discord autocomplete is declared with a dedicated async handler and attached to an eligible command option:
+
+```rust,ignore
+use gloam_commands::prelude::*;
+
+struct State;
+
+#[autocomplete]
+async fn complete_query(ctx: AutocompleteContext<State>) -> Result<Vec<AutocompleteChoice>> {
+    let partial = match ctx.focused_value() {
+        Some(gloamwire::model::ApplicationCommandInteractionValue::String(value)) => value,
+        _ => return Ok(Vec::new()),
+    };
+
+    Ok(["alpha", "beta", "gamma"]
+        .into_iter()
+        .filter(|value| value.starts_with(partial))
+        .map(|value| AutocompleteChoice::string(value, value))
+        .collect())
+}
+
+#[command(description = "Search values")]
+async fn search(
+    ctx: Context<State>,
+    #[description = "Search query"]
+    #[autocomplete = complete_query]
+    query: String,
+) -> Result<()> {
+    ctx.reply(format!("Searching for {query}")).await?;
+    Ok(())
+}
+```
+
+Autocomplete is supported only for Discord String, Integer, and Number options (`String`, `i64`, `f64`, including optional forms). An option cannot combine autocomplete with static choices. Handler references are resolved by generated Rust paths, including module-qualified paths; there is no runtime string registry.
+
+`AutocompleteContext<D>` exposes the same shared runtime, application state, interaction, parsed command data, resolved leaf option scope, command path, and shard identity needed for dynamic completion. It additionally exposes `focused_name()` and `focused_value()` for the option Discord is currently completing. It intentionally does not expose normal reply/defer helpers because autocomplete interactions require an autocomplete-result callback rather than a channel-message acknowledgement.
+
+Autocomplete handlers return `Result<Vec<AutocompleteChoice>>`. The framework validates at most 25 results, choice-name/value limits, Discord numeric ranges, and value-kind compatibility with the focused option. It then converts the results directly into Gloamwire's autocomplete callback model and sends the callback; applications do not manually acknowledge the autocomplete interaction.
+
 ### Subcommands and groups
 
 `#[group]` applies to an inline module and generates a Discord-native command tree. Direct `#[command]` functions become subcommands. One nested `#[group]` level becomes a Discord subcommand group containing its direct command leaves:
@@ -210,7 +252,7 @@ let framework = Framework::builder(State)
 
 The supported hierarchy is exactly Discord's native shape: a top-level command may contain direct subcommands or subcommand groups, and a subcommand group contains subcommands. Deeper `#[group]` nesting is rejected at macro expansion time. Runtime registry validation also rejects empty groups, duplicate nested paths, scalar options on group nodes, and trees deeper than Discord supports when commands are constructed manually.
 
-Dispatch resolves the full submitted path before scheduling a handler. `ctx.command_path()` exposes that static path, while generated typed extraction reads only the resolved leaf's scalar options. Malformed or stale nested paths return `UnknownCommandPath` instead of falling through to another handler.
+Dispatch resolves the full submitted path before scheduling a handler. `ctx.command_path()` exposes that static path, while generated typed extraction reads only the resolved leaf's scalar options. Malformed or stale nested paths return `UnknownCommandPath` instead of falling through to another handler. Autocomplete dispatch uses the same path resolver so nested option completion targets the same registered leaf as normal command execution.
 
 ### Command synchronization
 
@@ -222,7 +264,7 @@ Available policies are:
 - `Registration::Global` — bulk-overwrites the application's global command set;
 - `Registration::None` — performs no registration HTTP requests and leaves command management external.
 
-Generated command trees are converted directly into Gloamwire's application-command request models. Top-level leaves emit scalar options; direct children of a group emit Discord `SUB_COMMAND` options; nested groups emit `SUB_COMMAND_GROUP` options containing their command leaves. Scalar option metadata includes requiredness, bounds, string lengths, and static choices from the same generated descriptors used by handler extraction. Ordering stays deterministic because synchronization walks the framework's `BTreeMap`-backed registry and preserves each validated child vector's order.
+Generated command trees are converted directly into Gloamwire's application-command request models. Top-level leaves emit scalar options; direct children of a group emit Discord `SUB_COMMAND` options; nested groups emit `SUB_COMMAND_GROUP` options containing their command leaves. Scalar option metadata includes requiredness, bounds, string lengths, static choices, and autocomplete flags from the same generated descriptors used by handler extraction and dispatch. Ordering stays deterministic because synchronization walks the framework's `BTreeMap`-backed registry and preserves each validated child vector's order.
 
 In managed mode, `Framework::run(...)` waits for the first Discord `READY` dispatch, reads the application ID from Gloamwire's typed `ReadyEvent`, and synchronizes once before continuing normal command handling. Applications that own their Gateway loop can synchronize explicitly:
 
@@ -257,13 +299,14 @@ The managed runtime:
 - requests no Gateway intents because application-command interactions do not require one;
 - optionally synchronizes the registry once from the first typed `READY` event;
 - parses only `INTERACTION_CREATE` application-command payloads through Gloamwire's typed dispatch API;
-- routes only chat-input commands registered in the local command registry;
+- routes registered chat-input command and autocomplete interactions through the local command registry;
 - resolves native subcommand/subcommand-group branches before handler scheduling;
-- preserves the receiving `ShardId` in `Context<D>`;
-- reserves an execution slot before spawning a handler, so command tasks remain bounded;
-- continues polling the Gateway while command handlers execute.
+- validates exactly one focused leaf option for autocomplete interactions;
+- preserves the receiving `ShardId` in `Context<D>` and `AutocompleteContext<D>`;
+- reserves an execution slot before spawning command or autocomplete handlers, so framework-owned tasks remain bounded;
+- continues polling the Gateway while handlers execute.
 
-Applications that already own a Gloamwire Gateway loop can call `Framework::dispatch(...)` or `Framework::dispatch_shard(...)` instead. Manual dispatch returns `DispatchOutcome`, including `Ignored`, `Unregistered`, `AtCapacity`, and a `Spawned(CommandTask)` handle.
+Applications that already own a Gloamwire Gateway loop can call `Framework::dispatch(...)` or `Framework::dispatch_shard(...)` instead. Manual dispatch returns `DispatchOutcome`, including `Ignored`, `Unregistered`, `AtCapacity`, and a `Spawned(CommandTask)` handle for both command and autocomplete handler tasks.
 
 `#[command]` currently:
 
@@ -275,9 +318,17 @@ Applications that already own a Gloamwire Gateway loop can call `Framework::disp
 - accepts supported typed slash-command parameters after the context;
 - supports inline static choices on String, Integer, and Number options;
 - supports typed `CommandChoice` enum parameters through a bare `#[choice]` marker;
-- validates command names, descriptions, parameter descriptions, option ordering, option count, supported types, constraints, and static choices;
+- supports `#[autocomplete = handler_path]` on String, Integer, and Number options;
+- validates command names, descriptions, parameter descriptions, option ordering, option count, supported types, constraints, static choices, and autocomplete compatibility;
 - preserves the original Rust function;
 - generates the static descriptor and erased extraction/handler adapter used by `commands![...]`.
+
+`#[autocomplete]` currently:
+
+- requires an `async fn` with exactly one `AutocompleteContext<D>` parameter;
+- requires a `Result<Vec<AutocompleteChoice>>` return type;
+- preserves the original Rust function;
+- generates the erased adapter referenced by `#[autocomplete = handler_path]`.
 
 `#[group]` currently:
 

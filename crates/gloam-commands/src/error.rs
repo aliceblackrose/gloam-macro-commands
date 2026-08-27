@@ -20,6 +20,27 @@ pub enum Error {
     #[error("unknown slash-command path `{0}`")]
     UnknownCommandPath(String),
 
+    /// Static autocomplete metadata and handler registration were inconsistent.
+    #[error("invalid autocomplete configuration at `{0}`")]
+    InvalidAutocompleteConfiguration(String),
+
+    /// An autocomplete interaction did not contain exactly one valid focused option.
+    #[error("invalid autocomplete focus at `{0}`")]
+    InvalidAutocompleteFocus(String),
+
+    /// A focused autocomplete option did not have a registered handler.
+    #[error("unknown autocomplete option `{option}` at `{path}`")]
+    UnknownAutocompleteOption {
+        /// Resolved command path.
+        path: String,
+        /// Focused option name.
+        option: String,
+    },
+
+    /// An autocomplete handler returned choices Discord cannot accept.
+    #[error("invalid autocomplete response: {0}")]
+    InvalidAutocompleteResponse(String),
+
     /// The configured global command-concurrency limit was zero.
     #[error("max concurrent commands must be greater than zero")]
     InvalidConcurrencyLimit,

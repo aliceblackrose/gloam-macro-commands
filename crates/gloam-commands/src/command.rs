@@ -2,7 +2,7 @@ use std::{future::Future, pin::Pin};
 
 use gloamwire::model::{ApplicationCommandNumericValue, ApplicationCommandOptionType};
 
-use crate::{Context, Result};
+use crate::{AutocompleteHandler, AutocompleteHandlerDescriptor, Context, Result};
 
 /// Boxed future returned by generated slash-command adapters.
 pub type CommandFuture = Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>;
@@ -72,6 +72,8 @@ pub struct CommandOptionDescriptor {
     pub required: bool,
     /// Fixed choices accepted by this option.
     pub choices: &'static [CommandChoiceDescriptor],
+    /// Whether Discord should request autocomplete interactions for this option.
+    pub autocomplete: bool,
     /// Optional minimum numeric value.
     pub min_value: Option<ApplicationCommandNumericValue>,
     /// Optional maximum numeric value.
@@ -97,6 +99,7 @@ impl CommandOptionDescriptor {
             kind,
             required,
             choices: &[],
+            autocomplete: false,
             min_value: None,
             max_value: None,
             min_length: None,
@@ -108,6 +111,13 @@ impl CommandOptionDescriptor {
     #[must_use]
     pub const fn with_choices(mut self, choices: &'static [CommandChoiceDescriptor]) -> Self {
         self.choices = choices;
+        self
+    }
+
+    /// Enables Discord autocomplete interactions for this option.
+    #[must_use]
+    pub const fn autocomplete(mut self) -> Self {
+        self.autocomplete = true;
         self
     }
 
@@ -194,8 +204,13 @@ impl CommandDescriptor {
     }
 }
 
+struct SlashCommandLeaf<D> {
+    handler: CommandHandler<D>,
+    autocomplete: Vec<AutocompleteHandlerDescriptor<D>>,
+}
+
 enum SlashCommandKind<D> {
-    Leaf(CommandHandler<D>),
+    Leaf(SlashCommandLeaf<D>),
     Group(Vec<SlashCommand<D>>),
 }
 
@@ -212,10 +227,23 @@ pub struct SlashCommand<D> {
 impl<D> SlashCommand<D> {
     /// Creates a leaf slash command from static metadata and an erased handler.
     #[must_use]
-    pub const fn new(descriptor: &'static CommandDescriptor, handler: CommandHandler<D>) -> Self {
+    pub fn new(descriptor: &'static CommandDescriptor, handler: CommandHandler<D>) -> Self {
+        Self::new_with_autocomplete(descriptor, handler, Vec::new())
+    }
+
+    /// Creates a leaf slash command with generated autocomplete handlers.
+    #[must_use]
+    pub fn new_with_autocomplete(
+        descriptor: &'static CommandDescriptor,
+        handler: CommandHandler<D>,
+        autocomplete: Vec<AutocompleteHandlerDescriptor<D>>,
+    ) -> Self {
         Self {
             descriptor,
-            kind: SlashCommandKind::Leaf(handler),
+            kind: SlashCommandKind::Leaf(SlashCommandLeaf {
+                handler,
+                autocomplete,
+            }),
         }
     }
 
@@ -238,8 +266,26 @@ impl<D> SlashCommand<D> {
     #[must_use]
     pub const fn handler(&self) -> Option<CommandHandler<D>> {
         match &self.kind {
-            SlashCommandKind::Leaf(handler) => Some(*handler),
+            SlashCommandKind::Leaf(leaf) => Some(leaf.handler),
             SlashCommandKind::Group(_) => None,
+        }
+    }
+
+    pub(crate) fn autocomplete_handler(&self, option_name: &str) -> Option<AutocompleteHandler<D>> {
+        match &self.kind {
+            SlashCommandKind::Leaf(leaf) => leaf
+                .autocomplete
+                .iter()
+                .find(|entry| entry.option_name() == option_name)
+                .map(AutocompleteHandlerDescriptor::handler),
+            SlashCommandKind::Group(_) => None,
+        }
+    }
+
+    pub(crate) fn autocomplete_handlers(&self) -> &[AutocompleteHandlerDescriptor<D>] {
+        match &self.kind {
+            SlashCommandKind::Leaf(leaf) => &leaf.autocomplete,
+            SlashCommandKind::Group(_) => &[],
         }
     }
 
