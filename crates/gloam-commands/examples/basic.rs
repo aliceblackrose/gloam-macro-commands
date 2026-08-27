@@ -11,7 +11,7 @@ async fn hello(
     #[max_length = 64]
     name: String,
 ) -> Result<()> {
-    ctx.reply(format!("Hello, {name}!" )).await?;
+    ctx.reply(format!("Hello, {name}!")).await?;
     Ok(())
 }
 
