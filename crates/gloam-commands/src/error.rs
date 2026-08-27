@@ -20,6 +20,22 @@ pub enum Error {
     #[error("application-command interaction is missing command data")]
     MissingApplicationCommandData,
 
+    /// An operation required an acknowledgement, but the interaction is still pending.
+    #[error("interaction has not been acknowledged")]
+    InteractionNotAcknowledged,
+
+    /// A second initial acknowledgement or deferral was attempted.
+    #[error("interaction has already been acknowledged")]
+    InteractionAlreadyAcknowledged,
+
+    /// The original interaction response was already deleted.
+    #[error("original interaction response has already been deleted")]
+    OriginalResponseDeleted,
+
+    /// A deferred public original response was asked to become ephemeral.
+    #[error("interaction response visibility cannot be changed after deferral")]
+    ResponseVisibilityMismatch,
+
     /// Manual dispatch was attempted outside a Tokio runtime.
     #[error("command dispatch requires an active Tokio runtime")]
     NoAsyncRuntime,
