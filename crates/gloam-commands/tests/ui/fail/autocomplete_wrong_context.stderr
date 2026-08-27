@@ -1,0 +1,5 @@
+error: autocomplete context parameter must have type `AutocompleteContext<D>`
+ --> tests/ui/fail/autocomplete_wrong_context.rs:8:25
+  |
+8 | async fn complete(_ctx: Context<State>) -> Result<Vec<AutocompleteChoice>> {
+  |                         ^^^^^^^^^^^^^^
