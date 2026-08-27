@@ -64,12 +64,13 @@ Context<D>
   ├── Arc<Runtime<D>>
   ├── Arc<Interaction>
   ├── registered command name
-  └── optional ShardId
+  ├── optional ShardId
+  └── Arc<Mutex<ResponseState>>  # shared acknowledgement state
 ```
 
 `D` is application-owned shared state. The framework stores it behind `Arc` so command contexts can be owned values and can safely move into asynchronous handler tasks without requiring `D: Clone`.
 
-There is no global runtime singleton.
+There is no global runtime singleton. Clones of one `Context<D>` share both the same interaction and the same response state.
 
 ## Command model
 
@@ -127,7 +128,7 @@ INTERACTION_CREATE
         └── other interaction type ──────────► ignored
 ```
 
-The framework reuses Gloamwire's `Interaction`, `GatewayEvent`, `ShardEvent`, and `ShardManager` types directly rather than creating parallel Discord models.
+The framework reuses Gloamwire's `Interaction`, `GatewayEvent`, `ShardEvent`, and `ShardManager` types directly rather than creating parallel Discord models. `DispatchEvent::typed()` remains Gloamwire's responsibility; the framework only applies command-specific routing after typed decoding.
 
 Applications may choose either execution path:
 
@@ -156,7 +157,7 @@ Gateway polling
 
 `FrameworkBuilder::max_concurrent_commands(...)` controls the number of framework-owned handler tasks. The default is finite. A zero limit is rejected at build time.
 
-Manual dispatch surfaces saturation as `DispatchOutcome::AtCapacity`. The managed runtime also refuses to create a task when saturated and immediately continues Gateway polling. A later response-policy phase can decide how saturated interactions should be acknowledged to Discord without weakening this scheduler invariant.
+Manual dispatch surfaces saturation as `DispatchOutcome::AtCapacity`. The managed runtime also refuses to create a task when saturated and immediately continues Gateway polling. A later execution-policy phase can add application-configurable handling without weakening this scheduler invariant.
 
 ## Managed runtime
 
@@ -181,6 +182,19 @@ ctx.command_name()
 ctx.shard_id()
 ```
 
+Current response helpers include:
+
+```text
+ctx.reply(...)
+ctx.reply_ephemeral(...)
+ctx.defer()
+ctx.defer_ephemeral()
+ctx.edit_response(...)
+ctx.delete_response()
+ctx.followup(...)
+ctx.followup_ephemeral(...)
+```
+
 Planned accessors include:
 
 ```text
@@ -191,35 +205,38 @@ ctx.member()
 ctx.command_path()
 ```
 
-Planned response helpers include:
-
-```text
-ctx.reply(...)
-ctx.reply_ephemeral(...)
-ctx.defer()
-ctx.defer_ephemeral()
-ctx.edit_response(...)
-ctx.delete_response()
-ctx.followup(...)
-```
-
 ## Response state
 
-Discord interactions have acknowledgement constraints. The framework will track the acknowledgement state per interaction so handlers do not need to manually decide between initial callbacks and followups.
+Discord interactions allow one initial acknowledgement. The framework tracks that acknowledgement state per command context and shares it across all clones of that context.
 
-Conceptually:
+The state machine is:
 
 ```text
 Pending
-  ├── reply ─────► Responded
-  └── defer ─────► Deferred
+  ├── reply ───────────────► Responded
+  └── defer(public/private)► Deferred { visibility }
 
-Responded/Deferred
-  ├── edit original
-  └── followup
+Deferred
+  ├── matching reply ──────► Responded       # edits @original
+  ├── edit original ───────► Responded
+  ├── delete original ─────► Deleted
+  └── followup ────────────► Deferred         # original remains deferred
+
+Responded
+  ├── reply ───────────────► Responded        # creates followup
+  ├── edit original ───────► Responded
+  ├── delete original ─────► Deleted
+  └── followup ────────────► Responded
+
+Deleted
+  └── reply/followup ──────► Deleted          # followup webhook remains usable
 ```
 
-Invalid transitions must return framework errors rather than silently issuing incorrect Discord requests.
+A Tokio mutex serializes transitions and stays held while the state-changing Gloamwire REST request is in flight. This prevents two cloned contexts from both deciding they own the initial acknowledgement. The state is advanced only after a successful REST call, so a failed initial reply/defer/edit/delete does not corrupt the local transition state.
+
+Deferral visibility is invariant for the original response. A public deferral cannot be completed through an ephemeral reply helper, and an ephemeral deferral cannot be completed through the public reply helper. Those cases return a framework error before sending an invalid or misleading request.
+
+Explicit `followup` calls require an acknowledged interaction. Automatic `reply` calls become followups once the original response is already acknowledged.
 
 ## Typed option model
 
@@ -255,14 +272,17 @@ It will not invent deeper application-only nesting that Discord cannot register.
 
 ## Error boundaries
 
-Framework errors should represent framework invariants such as:
+Framework errors represent framework invariants such as:
 
 - duplicate command registration;
 - invalid concurrency configuration;
 - invalid interaction payloads;
 - invalid option extraction;
 - unknown command paths;
-- invalid interaction response transitions;
+- an acknowledgement required before edit/delete/followup;
+- a repeated deferral;
+- an original response that was already deleted;
+- a deferral visibility mismatch;
 - failed checks.
 
 Protocol/REST/Gateway errors remain Gloamwire errors wrapped transparently rather than copied into parallel error models.
@@ -275,8 +295,8 @@ Protocol/REST/Gateway errors remain Gloamwire errors wrapped transparently rathe
 4. Do not require message-content or other Gateway intents for slash-command functionality.
 5. Keep registration deterministic and reject duplicate command paths early.
 6. Generate registration metadata and option extraction from the same source signature.
-7. Do not hide Discord acknowledgement state transitions.
+7. Serialize and expose Discord acknowledgement semantics instead of hiding invalid transitions.
 8. Keep managed execution optional; advanced applications must be able to dispatch interactions from their own Gateway loop.
-9. Do not duplicate Gloamwire REST, Gateway, sharding, or Discord model implementations.
+9. Do not duplicate Gloamwire REST, Gateway, sharding, interaction, or Discord model implementations.
 10. Never block Gateway polling on command execution capacity and never create unbounded command waiter tasks.
 11. Prefix commands are a non-goal, not a deferred feature.
