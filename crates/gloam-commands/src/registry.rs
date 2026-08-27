@@ -10,7 +10,7 @@ pub struct CommandRegistry<D> {
 }
 
 impl<D> CommandRegistry<D> {
-    /// Creates an empty command registry.
+    /// Creates a slash-command registry.
     #[must_use]
     pub const fn new() -> Self {
         Self {
@@ -18,32 +18,30 @@ impl<D> CommandRegistry<D> {
         }
     }
 
-    /// Inserts a slash command, rejecting duplicate or invalid command paths.
+    /// Inserts one command after validating its Discord-native hierarchy.
     pub fn insert(&mut self, command: SlashCommand<D>) -> Result<()> {
         validate_hierarchy(&command)?;
-
         let name = command.descriptor().name;
         if self.commands.contains_key(name) {
             return Err(Error::DuplicateCommand(name));
         }
-
         self.commands.insert(name, command);
         Ok(())
     }
 
-    /// Returns a registered command by Discord command name.
+    /// Resolves one top-level command by registered name.
     #[must_use]
     pub fn get(&self, name: &str) -> Option<&SlashCommand<D>> {
         self.commands.get(name)
     }
 
-    /// Returns the number of registered commands.
+    /// Returns the number of registered top-level commands.
     #[must_use]
     pub fn len(&self) -> usize {
         self.commands.len()
     }
 
-    /// Returns whether no commands are registered.
+    /// Returns whether the registry has no commands.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.commands.is_empty()
@@ -167,8 +165,8 @@ mod tests {
     use super::CommandRegistry;
     use crate::{
         AutocompleteContext, AutocompleteFuture, AutocompleteHandlerDescriptor,
-        CommandChoiceDescriptor, CommandDescriptor, CommandOptionDescriptor, Context, Error, Result,
-        SlashCommand,
+        CommandChoiceDescriptor, CommandDescriptor, CommandOptionDescriptor, Context, Error,
+        Result, SlashCommand,
     };
 
     static PING: CommandDescriptor = CommandDescriptor::new("ping", "Check bot responsiveness");
