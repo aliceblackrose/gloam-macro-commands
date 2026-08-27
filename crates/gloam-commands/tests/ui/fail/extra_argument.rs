@@ -1,3 +1,5 @@
+#![allow(unused_imports)]
+
 use gloam_commands::{Context, Result, command};
 
 struct State;
