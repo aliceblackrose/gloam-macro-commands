@@ -3,6 +3,7 @@
 use proc_macro::TokenStream;
 
 mod autocomplete;
+mod check;
 mod choice;
 mod command;
 mod commands;
@@ -12,6 +13,14 @@ mod group;
 #[proc_macro_attribute]
 pub fn autocomplete(attribute: TokenStream, item: TokenStream) -> TokenStream {
     autocomplete::expand(attribute.into(), item.into())
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Declares an asynchronous slash-command execution check.
+#[proc_macro_attribute]
+pub fn check(attribute: TokenStream, item: TokenStream) -> TokenStream {
+    check::expand(attribute.into(), item.into())
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }
