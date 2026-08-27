@@ -592,9 +592,9 @@ fn autocomplete_response_choice(
     let value = match (option_kind, choice.value) {
         (ApplicationCommandOptionType::STRING, AutocompleteChoiceValue::String(value)) => {
             let value_length = value.chars().count();
-            if value_length == 0 || value_length > MAX_AUTOCOMPLETE_STRING_LENGTH {
+            if value_length > MAX_AUTOCOMPLETE_STRING_LENGTH {
                 return Err(Error::InvalidAutocompleteResponse(format!(
-                    "string choice values must contain 1 to {MAX_AUTOCOMPLETE_STRING_LENGTH} characters"
+                    "string choice values must contain at most {MAX_AUTOCOMPLETE_STRING_LENGTH} characters"
                 )));
             }
             ApplicationCommandChoiceValue::String(value)
