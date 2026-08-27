@@ -17,7 +17,7 @@ pub struct CommandOptions<'a> {
 impl<'a> CommandOptions<'a> {
     /// Creates an option view over parsed application-command data.
     #[must_use]
-    pub const fn new(data: &'a ApplicationCommandInteractionData) -> Self {
+    pub fn new(data: &'a ApplicationCommandInteractionData) -> Self {
         Self {
             options: &data.options,
         }
