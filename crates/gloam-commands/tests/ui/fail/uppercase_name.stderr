@@ -1,0 +1,5 @@
+error: Discord chat-input command names must use lowercase variants when available
+ --> tests/ui/fail/uppercase_name.rs:7:18
+  |
+7 | #[command(name = "Ping", description = "Check bot responsiveness")]
+  |                  ^^^^^^

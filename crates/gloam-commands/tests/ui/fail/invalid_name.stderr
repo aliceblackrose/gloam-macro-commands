@@ -1,0 +1,5 @@
+error: invalid Discord chat-input command name; expected 1-32 characters matching Discord's application-command naming rules
+ --> tests/ui/fail/invalid_name.rs:7:18
+  |
+7 | #[command(name = "bad name", description = "Invalid command name")]
+  |                  ^^^^^^^^^^

@@ -21,7 +21,7 @@ Version 0.1 targets a complete slash-command foundation:
 
 ## Phase 1 — Runtime foundation
 
-**Status:** Ready to merge
+**Status:** Complete
 
 Establish the crate boundaries and runtime abstractions before generated code depends on them.
 
@@ -37,24 +37,28 @@ Establish the crate boundaries and runtime abstractions before generated code de
 - [x] Reject duplicate command names.
 - [x] Add `Framework<D>` and `FrameworkBuilder<D>`.
 - [x] Run formatting, tests, Clippy, and documentation checks in CI.
-- [ ] Merge the Phase 1 branch after the foundation is green.
+- [x] Merge the Phase 1 branch after the foundation is green.
 
 **Exit criteria:** the workspace builds cleanly and exposes stable ownership boundaries for runtime state, contexts, command descriptors, and registration.
 
 ## Phase 2 — `#[command]` macro
 
+**Status:** Complete
+
 Implement the first procedural macro without adding typed options yet.
 
-- [ ] Add `syn`, `quote`, and `proc-macro2` only when macro implementation begins.
-- [ ] Parse async command functions.
-- [ ] Require `Context<D>` as the command context parameter.
-- [ ] Generate static `CommandDescriptor` metadata.
-- [ ] Generate the erased async handler adapter.
-- [ ] Preserve the user's original command function.
-- [ ] Re-export `#[command]` from `gloam-commands`.
-- [ ] Add compile-fail tests for invalid command signatures.
-- [ ] Add precise span-based macro diagnostics.
-- [ ] Add `commands![...]` for explicit deterministic registration.
+- [x] Add `syn`, `quote`, and `proc-macro2` only when macro implementation begins.
+- [x] Parse async command functions.
+- [x] Require `Context<D>` as the command context parameter.
+- [x] Require command handlers to return `Result<()>`.
+- [x] Generate static `CommandDescriptor` metadata.
+- [x] Generate the erased async handler adapter.
+- [x] Preserve the user's original command function.
+- [x] Re-export `#[command]` from `gloam-commands`.
+- [x] Validate Discord chat-input command names and description lengths at macro expansion time.
+- [x] Add compile-fail tests for invalid command signatures.
+- [x] Add precise span-based macro diagnostics.
+- [x] Add `commands![...]` for explicit deterministic registration.
 
 **Exit criteria:** a zero-option slash command can be declared with `#[command]` and registered without handwritten descriptor or adapter code.
 

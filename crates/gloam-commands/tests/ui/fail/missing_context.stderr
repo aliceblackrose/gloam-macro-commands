@@ -1,0 +1,5 @@
+error: slash-command context parameter must have type `Context<D>`
+ --> tests/ui/fail/missing_context.rs:6:22
+  |
+6 | async fn ping(value: String) -> Result<()> {
+  |                      ^^^^^^

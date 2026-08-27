@@ -12,5 +12,8 @@ gloamwire.workspace = true
 gloam-commands-macros.workspace = true
 thiserror.workspace = true
 
+[dev-dependencies]
+trybuild = "1"
+
 [lints]
 workspace = true

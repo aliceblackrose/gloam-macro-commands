@@ -1,0 +1,5 @@
+error: slash commands must be declared with `async fn`
+ --> tests/ui/fail/non_async.rs:8:1
+  |
+8 | fn ping(_ctx: Context<State>) -> Result<()> {
+  | ^^

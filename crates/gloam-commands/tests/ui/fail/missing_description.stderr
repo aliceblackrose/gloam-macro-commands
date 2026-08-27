@@ -1,0 +1,5 @@
+error: slash commands require `description = "..."`
+ --> tests/ui/fail/missing_description.rs:8:10
+  |
+8 | async fn ping(_ctx: Context<State>) -> Result<()> {
+  |          ^^^^
