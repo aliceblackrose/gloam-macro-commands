@@ -2,7 +2,7 @@
 
 A focused Discord **slash-command framework** for [Gloamwire](https://github.com/aliceblackrose/gloamwire), written for Rust 1.98 and Edition 2024.
 
-> **Current status:** Phase 10 — checks and execution policy.
+> **Current status:** Phase 11 — hooks, observability, and 0.1 hardening.
 
 The framework is intentionally limited to Discord chat-input application commands. It does **not** implement prefix commands, message-content parsing, or a hybrid prefix/slash command abstraction.
 
@@ -19,6 +19,8 @@ The framework is intentionally limited to Discord chat-input application command
 - Bound framework-owned command and autocomplete tasks instead of accumulating unbounded scheduler waiters.
 - Layer per-command execution limits beneath the framework-wide concurrency bound without queued waiter tasks.
 - Keep command eligibility checks deterministic, composable, and separate from Discord registration permissions.
+- Run framework lifecycle hooks in deterministic order and centralize normal command execution errors.
+- Make observability opt-in without taking ownership of an application's tracing subscriber.
 - Preserve Discord interaction acknowledgement rules across cloned command contexts.
 - Model Discord-native subcommands and subcommand groups without a parallel nested registry.
 - Keep static choice registration and typed choice extraction derived from one enum definition.
@@ -247,6 +249,50 @@ Cooldown state and per-command capacity are shared by the registered leaf rather
 
 Runtime execution policy is intentionally separate from Discord command registration permissions. `member_permissions` and `bot_permissions` are eligibility checks against the received interaction immediately before execution; they do not mutate Discord's registered command permission/default-member-permission fields.
 
+### Hooks, command errors, and tracing
+
+Framework-level lifecycle hooks wrap normal slash-command handlers without changing command macro signatures. Hooks and the centralized error handler use the existing erased `CommandFuture` ABI:
+
+```rust,ignore
+use gloam_commands::prelude::*;
+
+struct State;
+
+fn before_command(ctx: Context<State>) -> gloam_commands::CommandFuture {
+    Box::pin(async move {
+        let _path = ctx.command_path();
+        Ok(())
+    })
+}
+
+fn after_command(_ctx: Context<State>) -> gloam_commands::CommandFuture {
+    Box::pin(async { Ok(()) })
+}
+
+fn command_error(
+    ctx: Context<State>,
+    error: gloam_commands::Error,
+) -> gloam_commands::CommandFuture {
+    Box::pin(async move {
+        eprintln!("command {} failed: {error}", ctx.command_path().join(" "));
+        Ok(())
+    })
+}
+
+let framework = Framework::builder(State)
+    .commands(commands![moderate])
+    .before_command(before_command)
+    .after_command(after_command)
+    .command_error_handler(command_error)
+    .build()?;
+```
+
+Normal command lifecycle order is deterministic: execution policy, before hooks in registration order, the generated command handler, after hooks in registration order, then centralized error handling when an execution step failed. A policy or before-hook failure prevents the user handler from starting and therefore skips after hooks. Once the user handler starts, all after hooks are allowed to run even if the handler or an earlier after hook fails; the first execution error is retained.
+
+A centralized error handler receives ownership of that first error. Returning `Ok(())` marks it handled for the spawned `CommandTask`; returning an error propagates that error from `CommandTask::join()`. Without a configured handler, normal execution errors continue to propagate from the command task. Autocomplete stays on its separate callback path and does not run normal command hooks or policy.
+
+The optional `tracing` feature enables framework lifecycle events and Gloamwire's matching tracing feature without installing or configuring a subscriber. Built-in lifecycle tracing exposes only the resolved static command path; it does not log interaction tokens, raw Gateway payloads, submitted option values, autocomplete partial values, response bodies, application state, or formatted command errors. See [docs/observability.md](docs/observability.md) for the lifecycle and redaction contract.
+
 ### Subcommands and groups
 
 `#[group]` applies to an inline module and generates a Discord-native command tree. Direct `#[command]` functions become subcommands. One nested `#[group]` level becomes a Discord subcommand group containing its direct command leaves:
@@ -346,10 +392,11 @@ The managed runtime:
 - preserves the receiving `ShardId` in `Context<D>` and `AutocompleteContext<D>`;
 - reserves the framework-wide execution slot before spawning command or autocomplete handlers;
 - additionally reserves a command leaf's configured execution slot before spawning normal command handlers;
-- evaluates normal command execution policy before invoking handler business logic;
+- evaluates normal command execution policy and lifecycle hooks before/around handler business logic;
+- routes normal command execution failures through the configured centralized error handler;
 - continues polling the Gateway while handlers execute.
 
-Applications that already own a Gloamwire Gateway loop can call `Framework::dispatch(...)` or `Framework::dispatch_shard(...)` instead. Manual dispatch returns `DispatchOutcome`, including `Ignored`, `Unregistered`, `AtCapacity`, and a `Spawned(CommandTask)` handle for both command and autocomplete handler tasks.
+Applications that already own a Gloamwire Gateway loop can call `Framework::dispatch(...)` or `Framework::dispatch_shard(...)` instead. Manual dispatch returns `DispatchOutcome`, including `Ignored`, `Unregistered`, `AtCapacity`, and a `Spawned(CommandTask)` handle for both command and autocomplete handler tasks. See [docs/manual-dispatch.md](docs/manual-dispatch.md) for integration and task-ownership guidance.
 
 `#[command]` currently:
 
@@ -409,7 +456,7 @@ The major phases are:
 10. checks and execution policy;
 11. hooks, observability, and 0.1 hardening.
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for crate boundaries, ownership rules, concurrency design, and explicit non-goals.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for crate boundaries, ownership rules, concurrency design, and explicit non-goals. See [docs/0.1-release-checklist.md](docs/0.1-release-checklist.md) for the first-release gate.
 
 ## Non-goals
 
