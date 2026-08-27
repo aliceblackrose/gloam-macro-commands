@@ -10,10 +10,13 @@ description = "A slash-command framework for Gloamwire"
 [dependencies]
 gloamwire.workspace = true
 gloam-commands-macros.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 trybuild = "1"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [lints]
 workspace = true
