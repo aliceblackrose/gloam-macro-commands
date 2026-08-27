@@ -43,20 +43,21 @@ Establish the crate boundaries and runtime abstractions before generated code de
 
 ## Phase 2 — `#[command]` macro
 
-**Status:** In progress
+**Status:** Complete
 
 Implement the first procedural macro without adding typed options yet.
 
 - [x] Add `syn`, `quote`, and `proc-macro2` only when macro implementation begins.
 - [x] Parse async command functions.
 - [x] Require `Context<D>` as the command context parameter.
+- [x] Require command handlers to return `Result<()>`.
 - [x] Generate static `CommandDescriptor` metadata.
 - [x] Generate the erased async handler adapter.
 - [x] Preserve the user's original command function.
 - [x] Re-export `#[command]` from `gloam-commands`.
 - [x] Validate Discord chat-input command names and description lengths at macro expansion time.
-- [ ] Add compile-fail tests for invalid command signatures.
-- [ ] Add precise span-based macro diagnostics.
+- [x] Add compile-fail tests for invalid command signatures.
+- [x] Add precise span-based macro diagnostics.
 - [x] Add `commands![...]` for explicit deterministic registration.
 
 **Exit criteria:** a zero-option slash command can be declared with `#[command]` and registered without handwritten descriptor or adapter code.
