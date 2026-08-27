@@ -65,14 +65,15 @@ Context<D>
   ├── Arc<Runtime<D>>
   ├── Arc<Interaction>
   ├── Arc<ApplicationCommandInteractionData>
-  ├── registered command name
+  ├── resolved static command path
+  ├── resolved leaf option scope
   ├── optional ShardId
   └── Arc<Mutex<ResponseState>>  # shared acknowledgement state
 ```
 
 `D` is application-owned shared state. The framework stores it behind `Arc` so command contexts can be owned values and can safely move into asynchronous handler tasks without requiring `D: Clone`.
 
-There is no global runtime singleton. Clones of one `Context<D>` share the same interaction, the same parsed application-command data, and the same response state.
+There is no global runtime singleton. Clones of one `Context<D>` share the same interaction, the same parsed application-command data, the same resolved command path and leaf option scope, and the same response state.
 
 ## Command model
 
@@ -99,13 +100,17 @@ async fn inspect(
            user handler
 ```
 
+`SlashCommand<D>` is either a handler-bearing leaf or a group node containing validated child commands. Group nodes have no handler or scalar options. Registry validation rejects empty groups, duplicate sibling paths, scalar options on group nodes, and hierarchy deeper than Discord supports.
+
+`#[group]` applies this tree model to inline Rust modules. Direct `#[command]` functions become subcommands, and one nested `#[group]` level becomes a Discord subcommand group.
+
 ## Registration model
 
 Registration is explicit and deterministic. The framework uses an explicit command list rather than linker-based distributed registration.
 
 ```rust,ignore
 Framework::builder(state)
-    .commands(commands![ping, inspect, admin::ban])
+    .commands(commands![ping, inspect, admin])
     .registration(Registration::Guild(development_guild_id))
     .build()?;
 ```
@@ -118,7 +123,7 @@ Framework::builder(state)
 
 The safe default is deliberate: Discord bulk overwrite replaces the target command set, so constructing or running a framework must not mutate Discord command state unless the application explicitly selects a synchronization target.
 
-Synchronization walks `CommandRegistry<D>` in its existing `BTreeMap` order, converts each generated `CommandDescriptor` and `CommandOptionDescriptor` into Gloamwire's public application-command request models, and calls Gloamwire's existing global or guild bulk-overwrite REST method. The framework does not duplicate command HTTP routes or maintain a second registration schema.
+Synchronization walks `CommandRegistry<D>` in its existing `BTreeMap` order and converts each validated `SlashCommand<D>` tree into Gloamwire's public application-command request models. Leaf descriptors emit scalar options, direct group children emit Discord `SUB_COMMAND` options, and nested group nodes emit `SUB_COMMAND_GROUP` options containing subcommand leaves. The framework does not duplicate command HTTP routes or maintain a second registration schema.
 
 In managed mode, the first typed Discord `READY` event supplies `ReadyApplication.id`. The framework synchronizes exactly once with that application ID before continuing normal managed dispatch. Applications that own their Gateway loop can call `Framework::synchronize_commands(&rest, application_id)` explicitly.
 
@@ -134,7 +139,7 @@ Gloamwire GatewayEvent
         ▼
 INTERACTION_CREATE
         │
-        ├── chat-input application command ──► command registry ──► execution scheduler
+        ├── chat-input application command ──► command registry ──► path resolver ──► execution scheduler
         │
         ├── other application-command type ──► ignored
         ├── autocomplete ─────────────────────► later autocomplete path
@@ -143,7 +148,9 @@ INTERACTION_CREATE
 
 The framework reuses Gloamwire's `Interaction`, `GatewayEvent`, `ShardEvent`, and `ShardManager` types directly rather than creating parallel Discord models. `DispatchEvent::typed()` remains Gloamwire's responsibility; the framework only applies command-specific routing after typed decoding.
 
-For a chat-input invocation, dispatch parses `ApplicationCommandInteractionData` once through Gloamwire, uses that value for command routing, and stores it in `Context<D>`. Generated typed-option adapters therefore extract from the already-parsed command data instead of decoding the interaction payload a second time.
+For a chat-input invocation, dispatch parses `ApplicationCommandInteractionData` once through Gloamwire, resolves the submitted native subcommand/subcommand-group branch against the registered `SlashCommand<D>` tree, and stores the full static path plus selected leaf option scope in `Context<D>`. Generated typed-option adapters therefore extract only from that resolved leaf scope instead of decoding the interaction payload a second time.
+
+Malformed or stale nested paths return `UnknownCommandPath` instead of being routed to a different handler. A group level requires exactly one submitted branch, matching Discord's invocation shape.
 
 Applications may choose either execution path:
 
@@ -196,9 +203,13 @@ ctx.rest()
 ctx.runtime()
 ctx.interaction()
 ctx.command_data()
+ctx.command_options()
 ctx.command_name()
+ctx.command_path()
 ctx.shard_id()
 ```
+
+`command_data()` exposes the top-level parsed application command. `command_options()` exposes only the resolved leaf option scope used by generated typed extraction. `command_path()` exposes the static registered path, for example `admin config set` as three path components.
 
 Current response helpers include:
 
@@ -213,14 +224,13 @@ ctx.followup(...)
 ctx.followup_ephemeral(...)
 ```
 
-Planned accessors include:
+Planned convenience accessors include:
 
 ```text
 ctx.guild_id()
 ctx.channel_id()
 ctx.user()
 ctx.member()
-ctx.command_path()
 ```
 
 ## Response state
@@ -284,7 +294,7 @@ Unsupported parameter types fail at macro expansion with a diagnostic attached t
 
 ## Subcommands
 
-The framework will model Discord's native hierarchy only:
+The framework models Discord's native hierarchy only:
 
 ```text
 /command
@@ -292,7 +302,13 @@ The framework will model Discord's native hierarchy only:
 /group subgroup subcommand
 ```
 
-It will not invent deeper application-only nesting that Discord cannot register.
+`#[group(description = "...")]` applies to an inline module. Direct `#[command]` functions become Discord subcommands. One direct nested `#[group]` becomes a Discord subcommand group whose direct `#[command]` functions are its nested subcommands.
+
+The macro validates group names and descriptions using the same Discord rules as commands and rejects a third group level at expansion time. Runtime registry validation remains authoritative for manually constructed trees, including duplicate paths, empty groups, scalar options on group nodes, and excessive depth.
+
+The command registry stores only top-level names. Full nested paths resolve within the selected top-level `SlashCommand<D>` tree, keeping a single deterministic registry rather than introducing a parallel subcommand registry.
+
+The framework does not invent deeper application-only nesting that Discord cannot register.
 
 ## Error boundaries
 
