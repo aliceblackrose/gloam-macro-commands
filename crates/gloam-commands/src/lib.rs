@@ -44,7 +44,7 @@ pub mod __private {
 /// Common imports for applications using the framework.
 pub mod prelude {
     pub use crate::{
-        AutocompleteChoice, AutocompleteContext, CommandChoice, Context, DispatchOutcome, Framework,
-        Registration, Result, command, commands, group,
+        AutocompleteChoice, AutocompleteContext, CommandChoice, Context, DispatchOutcome,
+        Framework, Registration, Result, command, commands, group,
     };
 }
