@@ -158,6 +158,14 @@ fn parse_variants(data: &DataEnum) -> Result<Vec<VariantChoice>> {
             })?;
             validate_choice_name(&name)?;
             let value = args.value.as_ref().map(parse_value).transpose()?;
+            if value.is_none()
+                && variant.ident.unraw().to_string().chars().count() > MAX_CHOICE_STRING_VALUE
+            {
+                return Err(Error::new(
+                    variant.ident.span(),
+                    "Discord string choice values must contain at most 100 characters",
+                ));
+            }
 
             Ok(VariantChoice {
                 variant: variant.ident.clone(),
