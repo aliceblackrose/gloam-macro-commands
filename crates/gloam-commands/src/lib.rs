@@ -31,7 +31,5 @@ pub use runtime::Runtime;
 
 /// Common imports for applications using the framework.
 pub mod prelude {
-    pub use crate::{
-        Context, DispatchOutcome, Framework, Registration, Result, command, commands,
-    };
+    pub use crate::{Context, DispatchOutcome, Framework, Registration, Result, command, commands};
 }
