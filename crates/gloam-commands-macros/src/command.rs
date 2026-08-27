@@ -114,21 +114,21 @@ fn validate_signature(function: &ItemFn) -> Result<()> {
 
     if signature.asyncness.is_none() {
         return Err(Error::new_spanned(
-            &signature.fn_token,
+            signature.fn_token,
             "slash commands must be declared with `async fn`",
         ));
     }
 
     if signature.constness.is_some() {
         return Err(Error::new_spanned(
-            &signature.constness,
+            signature.constness,
             "slash commands cannot be `const`",
         ));
     }
 
     if signature.unsafety.is_some() {
         return Err(Error::new_spanned(
-            &signature.unsafety,
+            signature.unsafety,
             "slash commands cannot be `unsafe`",
         ));
     }
