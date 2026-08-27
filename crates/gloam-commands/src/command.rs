@@ -59,11 +59,35 @@ impl CommandOptionDescriptor {
         self
     }
 
+    /// Sets an integer minimum without exposing Gloamwire in generated code.
+    #[must_use]
+    pub const fn min_integer(self, value: i64) -> Self {
+        self.min_value(ApplicationCommandNumericValue::Integer(value))
+    }
+
+    /// Sets a number minimum without exposing Gloamwire in generated code.
+    #[must_use]
+    pub const fn min_number(self, value: f64) -> Self {
+        self.min_value(ApplicationCommandNumericValue::Number(value))
+    }
+
     /// Sets the maximum numeric value.
     #[must_use]
     pub const fn max_value(mut self, value: ApplicationCommandNumericValue) -> Self {
         self.max_value = Some(value);
         self
+    }
+
+    /// Sets an integer maximum without exposing Gloamwire in generated code.
+    #[must_use]
+    pub const fn max_integer(self, value: i64) -> Self {
+        self.max_value(ApplicationCommandNumericValue::Integer(value))
+    }
+
+    /// Sets a number maximum without exposing Gloamwire in generated code.
+    #[must_use]
+    pub const fn max_number(self, value: f64) -> Self {
+        self.max_value(ApplicationCommandNumericValue::Number(value))
     }
 
     /// Sets the minimum string length.
