@@ -455,7 +455,10 @@ fn take_option_attributes(attributes: &mut Vec<Attribute>) -> Result<OptionAttri
             match &attribute.meta {
                 Meta::Path(_) => {
                     if parsed.typed_choice {
-                        return Err(Error::new_spanned(attribute, "duplicate bare `#[choice]` marker"));
+                        return Err(Error::new_spanned(
+                            attribute,
+                            "duplicate bare `#[choice]` marker",
+                        ));
                     }
                     parsed.typed_choice = true;
                 }
@@ -520,14 +523,17 @@ fn parse_inline_choices(kind: OptionKind, choices: Vec<InlineChoiceArgs>) -> Res
     }
     if choices.len() > MAX_CHOICES {
         return Err(Error::new(
-            choices[MAX_CHOICES].name.as_ref().map_or_else(
-                || proc_macro2::Span::call_site(),
-                LitStr::span,
-            ),
+            choices[MAX_CHOICES]
+                .name
+                .as_ref()
+                .map_or_else(|| proc_macro2::Span::call_site(), LitStr::span),
             "Discord command options support at most 25 choices",
         ));
     }
-    if !matches!(kind, OptionKind::String | OptionKind::Integer | OptionKind::Number) {
+    if !matches!(
+        kind,
+        OptionKind::String | OptionKind::Integer | OptionKind::Number
+    ) {
         return Err(Error::new(
             choices[0]
                 .name
@@ -540,16 +546,19 @@ fn parse_inline_choices(kind: OptionKind, choices: Vec<InlineChoiceArgs>) -> Res
     let mut parsed = Vec::with_capacity(choices.len());
     let mut names = HashSet::new();
     for choice in choices {
-        let name = choice
-            .name
-            .ok_or_else(|| Error::new(proc_macro2::Span::call_site(), "inline choices require `name = \"...\"`"))?;
+        let name = choice.name.ok_or_else(|| {
+            Error::new(
+                proc_macro2::Span::call_site(),
+                "inline choices require `name = \"...\"`",
+            )
+        })?;
         validate_choice_name(&name)?;
         if !names.insert(name.value()) {
             return Err(Error::new(name.span(), "duplicate Discord choice name"));
         }
-        let expression = choice.value.ok_or_else(|| {
-            Error::new(name.span(), "inline choices require `value = ...`")
-        })?;
+        let expression = choice
+            .value
+            .ok_or_else(|| Error::new(name.span(), "inline choices require `value = ...`"))?;
         let value = match kind {
             OptionKind::String => parse_string_choice_value(&expression)?,
             OptionKind::Integer => InlineChoiceValue::Integer(parse_integer_bound(&expression)?),
@@ -560,7 +569,10 @@ fn parse_inline_choices(kind: OptionKind, choices: Vec<InlineChoiceArgs>) -> Res
             .iter()
             .any(|existing: &InlineChoice| same_choice_value(&existing.value, &value))
         {
-            return Err(Error::new_spanned(expression, "duplicate Discord choice value"));
+            return Err(Error::new_spanned(
+                expression,
+                "duplicate Discord choice value",
+            ));
         }
         parsed.push(InlineChoice { name, value });
     }
@@ -636,7 +648,9 @@ fn validate_typed_choice_type(ty: &Type) -> Result<bool> {
             "bare `#[choice]` requires a type that derives `CommandChoice`",
         ));
     };
-    if !matches!(segment.arguments, PathArguments::None) || known_option_kind(&segment.ident).is_some() {
+    if !matches!(segment.arguments, PathArguments::None)
+        || known_option_kind(&segment.ident).is_some()
+    {
         return Err(Error::new_spanned(
             inner,
             "bare `#[choice]` requires a type that derives `CommandChoice`",
