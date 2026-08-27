@@ -5,7 +5,10 @@ use gloamwire::{
     gateway::{
         GatewayEvent, GatewayIntents, ShardEvent, ShardId, ShardManager, TypedDispatchEvent,
     },
-    model::{ApplicationCommandType, ApplicationId, InteractionType},
+    model::{
+        ApplicationCommandInteractionDataOption, ApplicationCommandOptionType,
+        ApplicationCommandType, ApplicationId, InteractionType,
+    },
 };
 use tokio::{
     runtime::Handle,
@@ -174,14 +177,19 @@ where
         let Some(command) = self.registry.get(&command_data.name) else {
             return Ok(PreparedDispatch::Unregistered(command_data.name));
         };
-        let descriptor = command.descriptor();
-        let handler = command.handler();
+        let resolved = resolve_command(command, &command_data.options)?;
+        let descriptor = resolved.command.descriptor();
+        let handler = resolved
+            .command
+            .handler()
+            .ok_or_else(|| Error::UnknownCommandPath(resolved.path.join(" ")))?;
         let runtime = Arc::new(self.runtime(rest.clone()));
         let context = Context::new(
             runtime,
             Arc::from(interaction),
             Arc::new(command_data),
-            descriptor.name,
+            resolved.path,
+            resolved.options,
             shard_id,
         );
 
@@ -288,6 +296,84 @@ impl<D> FrameworkBuilder<D> {
     }
 }
 
+struct ResolvedCommand<'a, D> {
+    command: &'a SlashCommand<D>,
+    path: Vec<&'static str>,
+    options: Vec<ApplicationCommandInteractionDataOption>,
+}
+
+fn resolve_command<'a, D>(
+    command: &'a SlashCommand<D>,
+    submitted: &[ApplicationCommandInteractionDataOption],
+) -> Result<ResolvedCommand<'a, D>> {
+    let mut path = vec![command.descriptor().name];
+    if command.is_leaf() {
+        return Ok(ResolvedCommand {
+            command,
+            path,
+            options: submitted.to_vec(),
+        });
+    }
+
+    let branch = only_branch(submitted, &path)?;
+    let Some(child) = command
+        .children()
+        .iter()
+        .find(|child| child.descriptor().name == branch.name)
+    else {
+        path.push(Box::leak(branch.name.clone().into_boxed_str()));
+        return Err(Error::UnknownCommandPath(path.join(" ")));
+    };
+    path.push(child.descriptor().name);
+
+    if child.is_leaf() {
+        if branch.kind != ApplicationCommandOptionType::SUB_COMMAND {
+            return Err(Error::UnknownCommandPath(path.join(" ")));
+        }
+        return Ok(ResolvedCommand {
+            command: child,
+            path,
+            options: branch.options.clone(),
+        });
+    }
+
+    if branch.kind != ApplicationCommandOptionType::SUB_COMMAND_GROUP {
+        return Err(Error::UnknownCommandPath(path.join(" ")));
+    }
+    let nested = only_branch(&branch.options, &path)?;
+    let Some(leaf) = child
+        .children()
+        .iter()
+        .find(|candidate| candidate.descriptor().name == nested.name)
+    else {
+        return Err(Error::UnknownCommandPath(format!(
+            "{} {}",
+            path.join(" "),
+            nested.name
+        )));
+    };
+    path.push(leaf.descriptor().name);
+    if !leaf.is_leaf() || nested.kind != ApplicationCommandOptionType::SUB_COMMAND {
+        return Err(Error::UnknownCommandPath(path.join(" ")));
+    }
+
+    Ok(ResolvedCommand {
+        command: leaf,
+        path,
+        options: nested.options.clone(),
+    })
+}
+
+fn only_branch<'a>(
+    submitted: &'a [ApplicationCommandInteractionDataOption],
+    path: &[&str],
+) -> Result<&'a ApplicationCommandInteractionDataOption> {
+    if submitted.len() != 1 {
+        return Err(Error::UnknownCommandPath(path.join(" ")));
+    }
+    Ok(&submitted[0])
+}
+
 struct PreparedCommand<D> {
     command_name: &'static str,
     handler: CommandHandler<D>,
@@ -354,24 +440,37 @@ fn reap_completed_commands(commands: &mut JoinSet<Result<()>>) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
+    use std::sync::{
+        Mutex,
+        atomic::{AtomicI64, AtomicU32, AtomicU64, AtomicUsize, Ordering},
+    };
 
     use gloamwire::{
         RestClient,
         gateway::{DispatchEvent, GatewayEvent, ShardEvent, ShardId},
-        model::{ApplicationId, GuildId},
+        model::{ApplicationCommandOptionType, ApplicationId, GuildId},
     };
     use tokio::sync::Semaphore;
 
     use crate::{
-        CommandDescriptor, CommandTask, Context, DispatchOutcome, Error, Framework, Registration,
-        Result, SlashCommand,
+        CommandDescriptor, CommandOption, CommandOptionDescriptor, CommandTask, Context,
+        DispatchOutcome, Error, Framework, Registration, Result, SlashCommand,
     };
 
     use super::{DEFAULT_MAX_CONCURRENT_COMMANDS, ready_application_id};
 
     static PING: CommandDescriptor = CommandDescriptor::new("ping", "Check bot responsiveness");
     static SLOW: CommandDescriptor = CommandDescriptor::new("slow", "Exercise concurrency limits");
+    static ADMIN: CommandDescriptor = CommandDescriptor::new("admin", "Administration commands");
+    static CONFIG: CommandDescriptor = CommandDescriptor::new("config", "Configuration commands");
+    static SET_OPTIONS: &[CommandOptionDescriptor] = &[CommandOptionDescriptor::new(
+        "count",
+        "Configured value",
+        ApplicationCommandOptionType::INTEGER,
+        true,
+    )];
+    static SET: CommandDescriptor =
+        CommandDescriptor::new("set", "Set configuration").with_options(SET_OPTIONS);
 
     fn handler(_ctx: Context<()>) -> crate::CommandFuture {
         Box::pin(async { Ok(()) })
@@ -403,6 +502,29 @@ mod tests {
                 ctx.shard_id().map_or(u32::MAX, ShardId::get),
                 Ordering::SeqCst,
             );
+            Ok(())
+        })
+    }
+
+    struct NestedDispatchState {
+        path: Mutex<Vec<&'static str>>,
+        count: AtomicI64,
+    }
+
+    impl NestedDispatchState {
+        fn new() -> Self {
+            Self {
+                path: Mutex::new(Vec::new()),
+                count: AtomicI64::new(0),
+            }
+        }
+    }
+
+    fn nested_handler(ctx: Context<NestedDispatchState>) -> crate::CommandFuture {
+        Box::pin(async move {
+            let count = i64::extract(&ctx.command_options(), "count")?;
+            *ctx.data().path.lock().expect("path mutex") = ctx.command_path().to_vec();
+            ctx.data().count.store(count, Ordering::SeqCst);
             Ok(())
         })
     }
@@ -560,6 +682,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn dispatches_nested_subcommand_with_leaf_option_scope() -> Result<()> {
+        let framework = Framework::builder(NestedDispatchState::new())
+            .command(SlashCommand::group(
+                &ADMIN,
+                vec![SlashCommand::group(
+                    &CONFIG,
+                    vec![SlashCommand::new(&SET, nested_handler)],
+                )],
+            ))
+            .build()?;
+        let rest = RestClient::new("test-token")?;
+        let event = nested_interaction_event();
+
+        spawned(framework.dispatch(&rest, &event)?).join().await?;
+
+        assert_eq!(
+            framework.data().path.lock().expect("path mutex").as_slice(),
+            ["admin", "config", "set"]
+        );
+        assert_eq!(framework.data().count.load(Ordering::SeqCst), 7);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rejects_unknown_nested_command_paths() -> Result<()> {
+        let framework = Framework::builder(())
+            .command(SlashCommand::group(
+                &ADMIN,
+                vec![SlashCommand::new(&PING, handler)],
+            ))
+            .build()?;
+        let rest = RestClient::new("test-token")?;
+        let event = GatewayEvent::Dispatch(DispatchEvent {
+            name: "INTERACTION_CREATE".to_owned(),
+            sequence: 1,
+            data: serde_json::json!({
+                "id": "100",
+                "application_id": "200",
+                "type": 2,
+                "data": {
+                    "id": "300",
+                    "name": "admin",
+                    "type": 1,
+                    "options": [{"name":"missing","type":1}]
+                },
+                "token": "interaction-token",
+                "version": 1
+            }),
+        });
+
+        assert!(matches!(
+            framework.dispatch(&rest, &event),
+            Err(Error::UnknownCommandPath(path)) if path == "admin missing"
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn preserves_shard_identity_during_dispatch() -> Result<()> {
         let framework = Framework::builder(DispatchState::new())
             .command(SlashCommand::new(&PING, dispatch_handler))
@@ -623,6 +803,34 @@ mod tests {
                     "id": "300",
                     "name": command_name,
                     "type": 1
+                },
+                "token": "interaction-token",
+                "version": 1
+            }),
+        })
+    }
+
+    fn nested_interaction_event() -> GatewayEvent {
+        GatewayEvent::Dispatch(DispatchEvent {
+            name: "INTERACTION_CREATE".to_owned(),
+            sequence: 1,
+            data: serde_json::json!({
+                "id": "100",
+                "application_id": "200",
+                "type": 2,
+                "data": {
+                    "id": "300",
+                    "name": "admin",
+                    "type": 1,
+                    "options": [{
+                        "name": "config",
+                        "type": 2,
+                        "options": [{
+                            "name": "set",
+                            "type": 1,
+                            "options": [{"name":"count","type":4,"value":7}]
+                        }]
+                    }]
                 },
                 "token": "interaction-token",
                 "version": 1
