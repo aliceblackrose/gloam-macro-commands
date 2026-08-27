@@ -54,6 +54,7 @@ The proc-macro crate must not perform Discord runtime behavior, own global state
 Framework<D>
   ├── Arc<D>
   ├── CommandRegistry<D>
+  ├── Registration
   └── Arc<Semaphore>             # global command execution slots
 
 Runtime<D>
@@ -100,17 +101,28 @@ async fn inspect(
 
 ## Registration model
 
-Registration is explicit and deterministic. The initial design uses an explicit command list rather than linker-based distributed registration.
-
-Target API:
+Registration is explicit and deterministic. The framework uses an explicit command list rather than linker-based distributed registration.
 
 ```rust,ignore
 Framework::builder(state)
     .commands(commands![ping, inspect, admin::ban])
+    .registration(Registration::Guild(development_guild_id))
     .build()?;
 ```
 
-This keeps command ordering and duplicate detection visible and testable. Linker-based registration such as `inventory` or `linkme` is not part of the 0.1 design.
+`Registration` has three policies:
+
+- `Registration::Guild(GuildId)` bulk-overwrites one guild's command set and is the recommended development workflow because guild updates propagate quickly;
+- `Registration::Global` bulk-overwrites the application's global command set;
+- `Registration::None` leaves registration externally managed and is the default.
+
+The safe default is deliberate: Discord bulk overwrite replaces the target command set, so constructing or running a framework must not mutate Discord command state unless the application explicitly selects a synchronization target.
+
+Synchronization walks `CommandRegistry<D>` in its existing `BTreeMap` order, converts each generated `CommandDescriptor` and `CommandOptionDescriptor` into Gloamwire's public application-command request models, and calls Gloamwire's existing global or guild bulk-overwrite REST method. The framework does not duplicate command HTTP routes or maintain a second registration schema.
+
+In managed mode, the first typed Discord `READY` event supplies `ReadyApplication.id`. The framework synchronizes exactly once with that application ID before continuing normal managed dispatch. Applications that own their Gateway loop can call `Framework::synchronize_commands(&rest, application_id)` explicitly.
+
+Linker-based registration such as `inventory` or `linkme` is not part of the 0.1 design.
 
 ## Dispatch model
 
@@ -165,6 +177,8 @@ Manual dispatch surfaces saturation as `DispatchOutcome::AtCapacity`. The manage
 ## Managed runtime
 
 `Framework::run(...)` creates a Gloamwire `RestClient`, starts Gloamwire's recommended shard set through `ShardManager`, and continuously consumes its unified `ShardEvent` stream.
+
+If registration is `Global` or `Guild`, managed mode obtains the application ID from the first Gloamwire `TypedDispatchEvent::Ready` and performs one deterministic synchronization before normal command handling continues. `Registration::None` skips this path entirely.
 
 Slash-command dispatch requests `GatewayIntents::empty()` because Discord application-command interactions do not require Gateway intent subscriptions. Applications that also need guild/message/member event streams should own their Gloamwire loop and use manual framework dispatch with whatever intents their application requires.
 
@@ -295,7 +309,7 @@ Framework errors represent framework invariants such as:
 - a deferral visibility mismatch;
 - failed checks.
 
-Protocol/REST/Gateway errors remain Gloamwire errors wrapped transparently rather than copied into parallel error models.
+Protocol/REST/Gateway errors, including command synchronization failures, remain Gloamwire errors wrapped transparently rather than copied into parallel error models.
 
 ## API design rules
 

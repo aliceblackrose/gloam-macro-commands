@@ -5,7 +5,7 @@ use gloamwire::{
     gateway::{
         GatewayEvent, GatewayIntents, ShardEvent, ShardId, ShardManager, TypedDispatchEvent,
     },
-    model::{ApplicationCommandType, InteractionType},
+    model::{ApplicationCommandType, ApplicationId, InteractionType},
 };
 use tokio::{
     runtime::Handle,
@@ -15,7 +15,7 @@ use tokio::{
 
 use crate::{
     CommandFuture, CommandHandler, CommandRegistry, CommandTask, Context, DispatchOutcome, Error,
-    Result, Runtime, SlashCommand,
+    Registration, Result, Runtime, SlashCommand,
 };
 
 /// Default upper bound for simultaneously executing command handlers.
@@ -25,6 +25,7 @@ pub const DEFAULT_MAX_CONCURRENT_COMMANDS: usize = 64;
 pub struct Framework<D> {
     data: Arc<D>,
     registry: CommandRegistry<D>,
+    registration: Registration,
     max_concurrent_commands: usize,
     command_slots: Arc<Semaphore>,
 }
@@ -48,6 +49,12 @@ impl<D> Framework<D> {
         &self.registry
     }
 
+    /// Returns the configured Discord command-registration target.
+    #[must_use]
+    pub const fn registration(&self) -> Registration {
+        self.registration
+    }
+
     /// Returns the global limit for simultaneously executing commands.
     #[must_use]
     pub const fn max_concurrent_commands(&self) -> usize {
@@ -58,6 +65,21 @@ impl<D> Framework<D> {
     #[must_use]
     pub fn runtime(&self, rest: RestClient) -> Runtime<D> {
         Runtime::from_shared(Arc::new(rest), Arc::clone(&self.data))
+    }
+
+    /// Synchronizes the local command registry with the configured Discord target.
+    ///
+    /// This is useful for applications that own their Gateway loop. When
+    /// [`Registration::None`] is configured, this method performs no HTTP
+    /// requests and returns an empty command list.
+    pub async fn synchronize_commands(
+        &self,
+        rest: &RestClient,
+        application_id: ApplicationId,
+    ) -> Result<Vec<gloamwire::model::ApplicationCommand>> {
+        self.registration
+            .synchronize(rest, application_id, &self.registry)
+            .await
     }
 }
 
@@ -82,7 +104,9 @@ where
 
     /// Starts Gloamwire's recommended shard set and dispatches slash commands.
     ///
-    /// The managed runtime requests no Gateway intents because Discord
+    /// When command registration is enabled, the local registry is synchronized
+    /// exactly once using the application ID from the first Discord `READY`
+    /// dispatch. The managed runtime requests no Gateway intents because Discord
     /// interactions do not require an intent. Applications that need additional
     /// event streams can own their Gateway loop and use [`Self::dispatch`] or
     /// [`Self::dispatch_shard`].
@@ -171,10 +195,16 @@ where
 
     async fn drive_shards(&self, rest: &RestClient, shards: &mut ShardManager) -> Result<()> {
         let mut commands = JoinSet::new();
+        let mut synchronized = self.registration == Registration::None;
 
         while let Some(event) = shards.next_event().await {
             reap_completed_commands(&mut commands)?;
             let event = event?;
+
+            if !synchronized && let Some(application_id) = ready_application_id(&event.event)? {
+                self.synchronize_commands(rest, application_id).await?;
+                synchronized = true;
+            }
 
             if let PreparedDispatch::Command(command) =
                 self.prepare_dispatch(rest, &event.event, Some(event.shard_id))?
@@ -193,6 +223,7 @@ where
 pub struct FrameworkBuilder<D> {
     data: D,
     commands: Vec<SlashCommand<D>>,
+    registration: Registration,
     max_concurrent_commands: usize,
 }
 
@@ -203,6 +234,7 @@ impl<D> FrameworkBuilder<D> {
         Self {
             data,
             commands: Vec::new(),
+            registration: Registration::None,
             max_concurrent_commands: DEFAULT_MAX_CONCURRENT_COMMANDS,
         }
     }
@@ -218,6 +250,13 @@ impl<D> FrameworkBuilder<D> {
     #[must_use]
     pub fn commands(mut self, commands: impl IntoIterator<Item = SlashCommand<D>>) -> Self {
         self.commands.extend(commands);
+        self
+    }
+
+    /// Configures where the local command registry is synchronized in managed mode.
+    #[must_use]
+    pub const fn registration(mut self, registration: Registration) -> Self {
+        self.registration = registration;
         self
     }
 
@@ -242,6 +281,7 @@ impl<D> FrameworkBuilder<D> {
         Ok(Framework {
             data: Arc::new(self.data),
             registry,
+            registration: self.registration,
             max_concurrent_commands: self.max_concurrent_commands,
             command_slots: Arc::new(Semaphore::new(self.max_concurrent_commands)),
         })
@@ -285,6 +325,20 @@ enum PreparedDispatch<D> {
     Command(PreparedCommand<D>),
 }
 
+fn ready_application_id(event: &GatewayEvent) -> Result<Option<ApplicationId>> {
+    let GatewayEvent::Dispatch(dispatch) = event else {
+        return Ok(None);
+    };
+    if dispatch.name != "READY" {
+        return Ok(None);
+    }
+
+    let TypedDispatchEvent::Ready(ready) = dispatch.typed()? else {
+        return Ok(None);
+    };
+    Ok(Some(ready.application.id))
+}
+
 fn reap_completed_commands(commands: &mut JoinSet<Result<()>>) -> Result<()> {
     while let Some(result) = commands.try_join_next() {
         match result {
@@ -305,15 +359,16 @@ mod tests {
     use gloamwire::{
         RestClient,
         gateway::{DispatchEvent, GatewayEvent, ShardEvent, ShardId},
+        model::{ApplicationId, GuildId},
     };
     use tokio::sync::Semaphore;
 
     use crate::{
-        CommandDescriptor, CommandTask, Context, DispatchOutcome, Error, Framework, Result,
-        SlashCommand,
+        CommandDescriptor, CommandTask, Context, DispatchOutcome, Error, Framework, Registration,
+        Result, SlashCommand,
     };
 
-    use super::DEFAULT_MAX_CONCURRENT_COMMANDS;
+    use super::{DEFAULT_MAX_CONCURRENT_COMMANDS, ready_application_id};
 
     static PING: CommandDescriptor = CommandDescriptor::new("ping", "Check bot responsiveness");
     static SLOW: CommandDescriptor = CommandDescriptor::new("slow", "Exercise concurrency limits");
@@ -396,10 +451,47 @@ mod tests {
 
         assert_eq!(framework.registry().len(), 1);
         assert!(framework.registry().get("ping").is_some());
+        assert_eq!(framework.registration(), Registration::None);
         assert_eq!(
             framework.max_concurrent_commands(),
             DEFAULT_MAX_CONCURRENT_COMMANDS
         );
+        Ok(())
+    }
+
+    #[test]
+    fn builder_configures_registration_target() -> Result<()> {
+        let registration = Registration::Guild(GuildId::new(42));
+        let framework = Framework::builder(()).registration(registration).build()?;
+
+        assert_eq!(framework.registration(), registration);
+        Ok(())
+    }
+
+    #[test]
+    fn extracts_application_id_from_ready_dispatch() -> Result<()> {
+        let event = GatewayEvent::Dispatch(DispatchEvent {
+            name: "READY".to_owned(),
+            sequence: 1,
+            data: serde_json::json!({
+                "v": 10,
+                "user": {
+                    "id": "100",
+                    "username": "bot",
+                    "discriminator": "0",
+                    "avatar": null
+                },
+                "guilds": [],
+                "session_id": "session",
+                "resume_gateway_url": "wss://gateway.discord.gg",
+                "application": {
+                    "id": "200",
+                    "flags": 0
+                }
+            }),
+        });
+
+        assert_eq!(ready_application_id(&event)?, Some(ApplicationId::new(200)));
         Ok(())
     }
 
