@@ -201,9 +201,7 @@ where
             reap_completed_commands(&mut commands)?;
             let event = event?;
 
-            if !synchronized
-                && let Some(application_id) = ready_application_id(&event.event)?
-            {
+            if !synchronized && let Some(application_id) = ready_application_id(&event.event)? {
                 self.synchronize_commands(rest, application_id).await?;
                 synchronized = true;
             }
