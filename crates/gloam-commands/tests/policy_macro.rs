@@ -1,6 +1,8 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use gloam_commands::{CommandTask, Context, DispatchOutcome, Error, Framework, Result, check, command, commands};
+use gloam_commands::{
+    CommandTask, Context, DispatchOutcome, Error, Framework, Result, check, command, commands,
+};
 use gloamwire::{
     RestClient,
     gateway::{DispatchEvent, GatewayEvent},
@@ -62,7 +64,10 @@ async fn generated_policy_is_enforced_during_dispatch() -> Result<()> {
     .join()
     .await
     .expect_err("member permission policy should run before custom checks");
-    assert!(matches!(permission_error, Error::MissingMemberPermissions { .. }));
+    assert!(matches!(
+        permission_error,
+        Error::MissingMemberPermissions { .. }
+    ));
     assert_eq!(framework.data().checks.load(Ordering::SeqCst), 0);
 
     spawned(framework.dispatch(
