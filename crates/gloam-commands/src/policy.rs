@@ -87,10 +87,7 @@ impl<D> CommandPolicy<D> {
     ///
     /// An empty set means unrestricted execution.
     #[must_use]
-    pub fn contexts(
-        mut self,
-        contexts: impl IntoIterator<Item = InteractionContextType>,
-    ) -> Self {
+    pub fn contexts(mut self, contexts: impl IntoIterator<Item = InteractionContextType>) -> Self {
         self.contexts = contexts.into_iter().collect();
         self
     }
@@ -204,7 +201,9 @@ impl<D> CommandPolicy<D> {
         }
 
         if let Some(required) = self.bot_permissions {
-            let actual = interaction.app_permissions.unwrap_or_else(Permissions::empty);
+            let actual = interaction
+                .app_permissions
+                .unwrap_or_else(Permissions::empty);
             if !actual.contains(required) {
                 return Err(Error::MissingBotPermissions {
                     path,
