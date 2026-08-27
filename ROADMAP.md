@@ -102,23 +102,25 @@ Add ergonomic response APIs while preserving Discord acknowledgement rules.
 
 ## Phase 5 — Typed slash-command options
 
+**Status:** Complete
+
 Generate Discord option schemas and runtime extraction from one Rust function signature.
 
-- [ ] Add option descriptor metadata.
-- [ ] Support `String`.
-- [ ] Support `bool`.
-- [ ] Support `i64`.
-- [ ] Support `f64`.
-- [ ] Support `UserId`.
-- [ ] Support `ChannelId`.
-- [ ] Support `RoleId`.
-- [ ] Support attachments.
-- [ ] Support `Option<T>` as an optional option.
-- [ ] Add `#[description = "..."]` parameter metadata.
-- [ ] Add numeric minimum/maximum constraints.
-- [ ] Add string length constraints.
-- [ ] Validate unsupported Rust parameter types at macro expansion time.
-- [ ] Ensure registration metadata and runtime extraction cannot drift.
+- [x] Add option descriptor metadata.
+- [x] Support `String`.
+- [x] Support `bool`.
+- [x] Support `i64`.
+- [x] Support `f64`.
+- [x] Support `UserId`.
+- [x] Support `ChannelId`.
+- [x] Support `RoleId`.
+- [x] Support attachments through `AttachmentId`.
+- [x] Support `Option<T>` as an optional option.
+- [x] Add `#[description = "..."]` parameter metadata.
+- [x] Add numeric minimum/maximum constraints.
+- [x] Add string length constraints.
+- [x] Validate unsupported Rust parameter types at macro expansion time.
+- [x] Ensure registration metadata and runtime extraction cannot drift.
 
 **Exit criteria:** typed Rust parameters fully define both the Discord slash-command schema and handler extraction behavior.
 

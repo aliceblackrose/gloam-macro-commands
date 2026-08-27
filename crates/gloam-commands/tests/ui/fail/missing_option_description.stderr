@@ -1,0 +1,5 @@
+error: slash-command options require `#[description = "..."]`
+ --> tests/ui/fail/missing_option_description.rs:8:37
+  |
+8 | async fn echo(_ctx: Context<State>, value: String) -> Result<()> {
+  |                                     ^^^^^

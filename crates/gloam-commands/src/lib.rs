@@ -10,16 +10,20 @@ mod context;
 mod dispatch;
 mod error;
 mod framework;
+mod options;
 mod registry;
 mod response;
 mod runtime;
 
-pub use command::{CommandDescriptor, CommandFuture, CommandHandler, SlashCommand};
+pub use command::{
+    CommandDescriptor, CommandFuture, CommandHandler, CommandOptionDescriptor, SlashCommand,
+};
 pub use context::Context;
 pub use dispatch::{CommandTask, DispatchOutcome};
 pub use error::{Error, Result};
 pub use framework::{DEFAULT_MAX_CONCURRENT_COMMANDS, Framework, FrameworkBuilder};
 pub use gloam_commands_macros::{command, commands};
+pub use options::{CommandOption, CommandOptions};
 pub use registry::CommandRegistry;
 pub use runtime::Runtime;
 

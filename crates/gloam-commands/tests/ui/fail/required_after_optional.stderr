@@ -1,0 +1,5 @@
+error: required slash-command options must appear before optional `Option<T>` parameters
+  --> tests/ui/fail/required_after_optional.rs:11:39
+   |
+11 |     #[description = "Required value"] required: String,
+   |                                       ^^^^^^^^

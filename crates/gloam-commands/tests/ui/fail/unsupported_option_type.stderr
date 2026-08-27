@@ -1,0 +1,5 @@
+error: unsupported slash-command option type; expected `String`, `bool`, `i64`, `f64`, `UserId`, `ChannelId`, `RoleId`, `AttachmentId`, or `Option<T>` of one of those types
+  --> tests/ui/fail/unsupported_option_type.rs:10:49
+   |
+10 |     #[description = "Unsupported value"] value: u32,
+   |                                                 ^^^
