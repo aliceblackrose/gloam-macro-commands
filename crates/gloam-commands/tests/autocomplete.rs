@@ -64,6 +64,27 @@ mod admin {
     }
 }
 
+#[autocomplete]
+async fn complete_empty_value(
+    _ctx: AutocompleteContext<State>,
+) -> Result<Vec<AutocompleteChoice>> {
+    Ok(vec![
+        AutocompleteChoice::string("Empty", ""),
+        AutocompleteChoice::integer("Wrong type", 1),
+    ])
+}
+
+#[command(description = "Validate empty autocomplete values")]
+async fn empty_value(
+    _ctx: Context<State>,
+    #[description = "Search query"]
+    #[autocomplete = complete_empty_value]
+    query: String,
+) -> Result<()> {
+    let _ = query;
+    Ok(())
+}
+
 #[tokio::test]
 async fn macro_autocomplete_routes_nested_focus_before_response_validation() -> Result<()> {
     let framework = Framework::builder(State::new())
@@ -130,6 +151,27 @@ async fn autocomplete_requires_exactly_one_focused_leaf_option() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn autocomplete_allows_empty_string_choice_values() -> Result<()> {
+    let framework = Framework::builder(State::new())
+        .commands(commands![empty_value])
+        .build()?;
+    let rest = RestClient::new("test-token")?;
+    let event = top_level_autocomplete_event("empty_value");
+
+    let DispatchOutcome::Spawned(task) = framework.dispatch(&rest, &event)? else {
+        panic!("expected autocomplete handler to spawn");
+    };
+
+    match task.join().await {
+        Err(Error::InvalidAutocompleteResponse(message)) => {
+            assert!(message.contains("choice value type does not match"));
+        }
+        other => panic!("expected autocomplete response validation error, got {other:?}"),
+    }
+    Ok(())
+}
+
 fn autocomplete_event(focused: bool) -> GatewayEvent {
     GatewayEvent::Dispatch(DispatchEvent {
         name: "INTERACTION_CREATE".to_owned(),
@@ -155,6 +197,31 @@ fn autocomplete_event(focused: bool) -> GatewayEvent {
                             "focused": focused
                         }]
                     }]
+                }]
+            },
+            "token": "interaction-token",
+            "version": 1
+        }),
+    })
+}
+
+fn top_level_autocomplete_event(command_name: &str) -> GatewayEvent {
+    GatewayEvent::Dispatch(DispatchEvent {
+        name: "INTERACTION_CREATE".to_owned(),
+        sequence: 1,
+        data: serde_json::json!({
+            "id": "100",
+            "application_id": "200",
+            "type": 4,
+            "data": {
+                "id": "300",
+                "name": command_name,
+                "type": 1,
+                "options": [{
+                    "name": "query",
+                    "type": 3,
+                    "value": "",
+                    "focused": true
                 }]
             },
             "token": "interaction-token",
