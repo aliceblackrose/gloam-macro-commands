@@ -126,17 +126,19 @@ Generate Discord option schemas and runtime extraction from one Rust function si
 
 ## Phase 6 — Command synchronization
 
+**Status:** Complete
+
 Register generated command schemas through Gloamwire's existing application-command REST APIs.
 
-- [ ] Add `Registration::Global`.
-- [ ] Add `Registration::Guild(GuildId)`.
-- [ ] Add `Registration::None` for externally managed registration.
-- [ ] Convert command descriptors to Gloamwire create-command payloads.
-- [ ] Bulk-overwrite global commands.
-- [ ] Bulk-overwrite guild commands.
-- [ ] Keep synchronization deterministic.
-- [ ] Surface registration failures without hiding Gloamwire errors.
-- [ ] Document guild registration as the recommended development workflow.
+- [x] Add `Registration::Global`.
+- [x] Add `Registration::Guild(GuildId)`.
+- [x] Add `Registration::None` for externally managed registration.
+- [x] Convert command descriptors to Gloamwire create-command payloads.
+- [x] Bulk-overwrite global commands.
+- [x] Bulk-overwrite guild commands.
+- [x] Keep synchronization deterministic.
+- [x] Surface registration failures without hiding Gloamwire errors.
+- [x] Document guild registration as the recommended development workflow.
 
 **Exit criteria:** the local registry can be synchronized with Discord without a second handwritten command schema.
 
