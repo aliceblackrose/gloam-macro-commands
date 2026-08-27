@@ -153,7 +153,13 @@ where
         let descriptor = command.descriptor();
         let handler = command.handler();
         let runtime = Arc::new(self.runtime(rest.clone()));
-        let context = Context::new(runtime, Arc::from(interaction), descriptor.name, shard_id);
+        let context = Context::new(
+            runtime,
+            Arc::from(interaction),
+            Arc::new(command_data),
+            descriptor.name,
+            shard_id,
+        );
 
         Ok(PreparedDispatch::Command(PreparedCommand {
             command_name: descriptor.name,
