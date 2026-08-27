@@ -39,15 +39,13 @@ impl Parse for CommandArgs {
             let value = input.parse::<LitStr>()?;
 
             if key == "name" {
-                if name.is_some() {
+                if name.replace(value).is_some() {
                     return Err(Error::new(key.span(), "duplicate `name` argument"));
                 }
-                name = Some(value);
             } else if key == "description" {
-                if description.is_some() {
+                if description.replace(value).is_some() {
                     return Err(Error::new(key.span(), "duplicate `description` argument"));
                 }
-                description = Some(value);
             } else {
                 return Err(Error::new(
                     key.span(),
@@ -58,7 +56,6 @@ impl Parse for CommandArgs {
             if input.is_empty() {
                 break;
             }
-
             input.parse::<Token![,]>()?;
         }
 
@@ -89,7 +86,6 @@ struct OptionParameter {
     ty: Type,
     name: LitStr,
     description: LitStr,
-    kind: OptionKind,
     required: bool,
     min: Option<NumericBound>,
     max: Option<NumericBound>,
@@ -121,7 +117,6 @@ pub(crate) fn expand(attribute: TokenStream, item: TokenStream) -> Result<TokenS
             "slash commands require `description = \"...\"`",
         )
     })?;
-
     validate_name(&command_name)?;
     validate_description(&description)?;
 
@@ -140,14 +135,18 @@ pub(crate) fn expand(attribute: TokenStream, item: TokenStream) -> Result<TokenS
     );
 
     let option_descriptors = options.iter().map(option_descriptor_tokens);
-    let option_idents = options.iter().map(|option| &option.ident).collect::<Vec<_>>();
+    let option_idents = options
+        .iter()
+        .map(|option| &option.ident)
+        .collect::<Vec<_>>();
     let option_types = options.iter().map(|option| &option.ty).collect::<Vec<_>>();
-    let option_names = options.iter().map(|option| &option.name).collect::<Vec<_>>();
+    let option_names = options
+        .iter()
+        .map(|option| &option.name)
+        .collect::<Vec<_>>();
 
     let handler_body = if options.is_empty() {
-        quote! {
-            ::std::boxed::Box::pin(#function_name(ctx))
-        }
+        quote! { ::std::boxed::Box::pin(#function_name(ctx)) }
     } else {
         quote! {
             ::std::boxed::Box::pin(async move {
@@ -160,7 +159,6 @@ pub(crate) fn expand(attribute: TokenStream, item: TokenStream) -> Result<TokenS
                         )?,
                     )*)
                 };
-
                 #function_name(ctx, #(#option_idents),*).await
             })
         }
@@ -197,35 +195,30 @@ fn validate_signature(function: &ItemFn) -> Result<()> {
             "slash commands must be declared with `async fn`",
         ));
     }
-
     if signature.constness.is_some() {
         return Err(Error::new_spanned(
             signature.constness,
             "slash commands cannot be `const`",
         ));
     }
-
     if signature.unsafety.is_some() {
         return Err(Error::new_spanned(
             signature.unsafety,
             "slash commands cannot be `unsafe`",
         ));
     }
-
     if signature.abi.is_some() {
         return Err(Error::new_spanned(
             &signature.abi,
             "slash commands cannot declare an explicit ABI",
         ));
     }
-
     if !signature.generics.params.is_empty() || signature.generics.where_clause.is_some() {
         return Err(Error::new_spanned(
             &signature.generics,
             "generic slash-command handlers are not supported",
         ));
     }
-
     if signature.variadic.is_some() {
         return Err(Error::new_spanned(
             &signature.variadic,
@@ -249,7 +242,6 @@ fn option_parameters(function: &mut ItemFn) -> Result<Vec<OptionParameter>> {
 
     let mut options = Vec::with_capacity(option_count);
     let mut saw_optional = false;
-
     for argument in function.sig.inputs.iter_mut().skip(1) {
         let option = option_parameter(argument)?;
         if option.required && saw_optional {
@@ -261,7 +253,6 @@ fn option_parameters(function: &mut ItemFn) -> Result<Vec<OptionParameter>> {
         saw_optional |= !option.required;
         options.push(option);
     }
-
     Ok(options)
 }
 
@@ -272,7 +263,6 @@ fn option_parameter(argument: &mut FnArg) -> Result<OptionParameter> {
             "slash-command options must be typed function parameters",
         ));
     };
-
     let Pat::Ident(pattern) = argument.pat.as_ref() else {
         return Err(Error::new_spanned(
             &argument.pat,
@@ -313,7 +303,6 @@ fn option_parameter(argument: &mut FnArg) -> Result<OptionParameter> {
         ty,
         name,
         description,
-        kind,
         required,
         min,
         max,
@@ -371,12 +360,7 @@ fn take_option_attributes(attributes: &mut Vec<Attribute>) -> Result<OptionAttri
     Ok(parsed)
 }
 
-fn set_once<T>(
-    slot: &mut Option<T>,
-    value: T,
-    attribute: &Attribute,
-    name: &str,
-) -> Result<()> {
+fn set_once<T>(slot: &mut Option<T>, value: T, attribute: &Attribute, name: &str) -> Result<()> {
     if slot.is_some() {
         return Err(Error::new_spanned(
             attribute,
@@ -399,7 +383,6 @@ fn parse_string_attribute(attribute: &Attribute, name: &str) -> Result<LitStr> {
             format!("`#[{name} = ...]` requires a string literal"),
         ));
     };
-
     Ok(value)
 }
 
@@ -410,7 +393,6 @@ fn parse_expression_attribute(attribute: &Attribute, name: &str) -> Result<Expr>
             format!("expected `#[{name} = ...]`"),
         ));
     };
-
     Ok(meta.value.clone())
 }
 
@@ -424,7 +406,6 @@ fn option_type(ty: &Type) -> Result<(OptionKind, bool)> {
         }
         return Ok((supported_option_kind(inner)?, false));
     }
-
     Ok((supported_option_kind(ty)?, true))
 }
 
@@ -457,7 +438,6 @@ fn option_inner_type(ty: &Type) -> Result<Option<&Type>> {
             "`Option` slash-command parameters require an inner Rust type",
         ));
     };
-
     Ok(Some(inner))
 }
 
@@ -494,95 +474,105 @@ fn unsupported_option_type(ty: &Type) -> Error {
 
 fn numeric_bounds(
     kind: OptionKind,
-    min: Option<&Expr>,
-    max: Option<&Expr>,
+    min_expression: Option<&Expr>,
+    max_expression: Option<&Expr>,
 ) -> Result<(Option<NumericBound>, Option<NumericBound>)> {
-    if min.is_none() && max.is_none() {
+    if min_expression.is_none() && max_expression.is_none() {
         return Ok((None, None));
     }
 
     match kind {
         OptionKind::Integer => {
-            let min = min.map(parse_integer_bound).transpose()?.map(NumericBound::Integer);
-            let max = max.map(parse_integer_bound).transpose()?.map(NumericBound::Integer);
+            let min = min_expression
+                .map(parse_integer_bound)
+                .transpose()?
+                .map(NumericBound::Integer);
+            let max = max_expression
+                .map(parse_integer_bound)
+                .transpose()?
+                .map(NumericBound::Integer);
             if let (Some(NumericBound::Integer(min)), Some(NumericBound::Integer(max))) = (min, max)
                 && min > max
             {
                 return Err(Error::new_spanned(
-                    max_expression(max),
+                    max_expression.expect("maximum expression is present"),
                     "integer `min` cannot be greater than `max`",
                 ));
             }
             Ok((min, max))
         }
         OptionKind::Number => {
-            let min = min.map(parse_number_bound).transpose()?.map(NumericBound::Number);
-            let max = max.map(parse_number_bound).transpose()?.map(NumericBound::Number);
+            let min = min_expression
+                .map(parse_number_bound)
+                .transpose()?
+                .map(NumericBound::Number);
+            let max = max_expression
+                .map(parse_number_bound)
+                .transpose()?
+                .map(NumericBound::Number);
             if let (Some(NumericBound::Number(min)), Some(NumericBound::Number(max))) = (min, max)
                 && min > max
             {
                 return Err(Error::new_spanned(
-                    max_expression(max),
+                    max_expression.expect("maximum expression is present"),
                     "number `min` cannot be greater than `max`",
                 ));
             }
             Ok((min, max))
         }
         _ => Err(Error::new_spanned(
-            min.or(max).expect("numeric constraint is present"),
+            min_expression
+                .or(max_expression)
+                .expect("numeric constraint is present"),
             "`#[min = ...]` and `#[max = ...]` are only supported for `i64` and `f64` options",
         )),
     }
 }
 
-fn max_expression<T>(_value: T) -> TokenStream {
-    TokenStream::new()
-}
-
 fn string_bounds(
     kind: OptionKind,
-    min: Option<&Expr>,
-    max: Option<&Expr>,
+    min_expression: Option<&Expr>,
+    max_expression: Option<&Expr>,
 ) -> Result<(Option<u32>, Option<u32>)> {
-    if min.is_none() && max.is_none() {
+    if min_expression.is_none() && max_expression.is_none() {
         return Ok((None, None));
     }
     if kind != OptionKind::String {
         return Err(Error::new_spanned(
-            min.or(max).expect("string-length constraint is present"),
+            min_expression
+                .or(max_expression)
+                .expect("string-length constraint is present"),
             "`#[min_length = ...]` and `#[max_length = ...]` are only supported for `String` options",
         ));
     }
 
-    let min_value = min.map(parse_length).transpose()?;
-    let max_value = max.map(parse_length).transpose()?;
-
-    if let Some(value) = min_value
+    let min = min_expression.map(parse_length).transpose()?;
+    let max = max_expression.map(parse_length).transpose()?;
+    if let Some(value) = min
         && value > MAX_STRING_LENGTH
     {
         return Err(Error::new_spanned(
-            min.expect("minimum expression is present"),
+            min_expression.expect("minimum expression is present"),
             "Discord string `min_length` must be between 0 and 6000",
         ));
     }
-    if let Some(value) = max_value
+    if let Some(value) = max
         && !(1..=MAX_STRING_LENGTH).contains(&value)
     {
         return Err(Error::new_spanned(
-            max.expect("maximum expression is present"),
+            max_expression.expect("maximum expression is present"),
             "Discord string `max_length` must be between 1 and 6000",
         ));
     }
-    if let (Some(min_value), Some(max_value)) = (min_value, max_value)
-        && min_value > max_value
+    if let (Some(min), Some(max)) = (min, max)
+        && min > max
     {
         return Err(Error::new_spanned(
-            max.expect("maximum expression is present"),
+            max_expression.expect("maximum expression is present"),
             "string `min_length` cannot be greater than `max_length`",
         ));
     }
-
-    Ok((min_value, max_value))
+    Ok((min, max))
 }
 
 fn parse_integer_bound(expression: &Expr) -> Result<i64> {
@@ -594,17 +584,18 @@ fn parse_integer_bound(expression: &Expr) -> Result<i64> {
         ));
     };
     let magnitude = literal.base10_digits().parse::<i128>().map_err(|_| {
-        Error::new_spanned(expression, "integer option bound is outside the supported range")
+        Error::new_spanned(
+            expression,
+            "integer option bound is outside the supported range",
+        )
     })?;
     let value = if negative { -magnitude } else { magnitude };
-
     if value < i128::from(MIN_INTEGER_VALUE) || value > i128::from(MAX_INTEGER_VALUE) {
         return Err(Error::new_spanned(
             expression,
             "Discord integer option bounds must be between -9007199254740991 and 9007199254740991",
         ));
     }
-
     Ok(value as i64)
 }
 
@@ -622,14 +613,12 @@ fn parse_number_bound(expression: &Expr) -> Result<f64> {
     }
     .map_err(|_| Error::new_spanned(expression, "invalid number option bound"))?;
     let value = if negative { -magnitude } else { magnitude };
-
     if !value.is_finite() || !(MIN_NUMBER_VALUE..=MAX_NUMBER_VALUE).contains(&value) {
         return Err(Error::new_spanned(
             expression,
             "Discord number option bounds must be between -9007199254740992 and 9007199254740992",
         ));
     }
-
     Ok(value)
 }
 
@@ -644,7 +633,6 @@ fn parse_length(expression: &Expr) -> Result<u32> {
             "string length constraints require non-negative integer literals",
         ));
     };
-
     literal.base10_parse::<u32>().map_err(|_| {
         Error::new_spanned(
             expression,
@@ -708,7 +696,6 @@ fn option_descriptor_tokens(option: &OptionParameter) -> TokenStream {
     if let Some(value) = option.max_length {
         descriptor = quote! { (#descriptor).max_length(#value) };
     }
-
     descriptor
 }
 
@@ -719,7 +706,6 @@ fn validate_return_type(output: &ReturnType) -> Result<()> {
             "slash commands must return `Result<()>`",
         ));
     };
-
     let Type::Path(result) = output.as_ref() else {
         return Err(Error::new_spanned(
             output,
@@ -732,7 +718,6 @@ fn validate_return_type(output: &ReturnType) -> Result<()> {
             "slash commands must return `Result<()>`",
         ));
     };
-
     if segment.ident != "Result" {
         return Err(Error::new_spanned(
             output,
@@ -746,10 +731,10 @@ fn validate_return_type(output: &ReturnType) -> Result<()> {
             "slash commands must return `Result<()>`",
         ));
     };
-
     let is_unit_result = matches!(
         arguments.args.first(),
-        Some(GenericArgument::Type(Type::Tuple(unit))) if arguments.args.len() == 1 && unit.elems.is_empty()
+        Some(GenericArgument::Type(Type::Tuple(unit)))
+            if arguments.args.len() == 1 && unit.elems.is_empty()
     );
     if !is_unit_result {
         return Err(Error::new_spanned(
@@ -757,7 +742,6 @@ fn validate_return_type(output: &ReturnType) -> Result<()> {
             "slash commands must return `Result<()>`",
         ));
     }
-
     Ok(())
 }
 
@@ -768,35 +752,30 @@ fn context_type(function: &ItemFn) -> Result<&Type> {
             "slash commands require a `Context<D>` parameter",
         ));
     };
-
     let FnArg::Typed(argument) = argument else {
         return Err(Error::new_spanned(
             argument,
             "slash commands must be free functions whose first parameter is `Context<D>`",
         ));
     };
-
     let Type::Path(context) = argument.ty.as_ref() else {
         return Err(Error::new_spanned(
             &argument.ty,
             "slash-command context parameter must have type `Context<D>`",
         ));
     };
-
     let Some(segment) = context.path.segments.last() else {
         return Err(Error::new_spanned(
             &argument.ty,
             "slash-command context parameter must have type `Context<D>`",
         ));
     };
-
     if segment.ident != "Context" {
         return Err(Error::new_spanned(
             &argument.ty,
             "slash-command context parameter must have type `Context<D>`",
         ));
     }
-
     Ok(argument.ty.as_ref())
 }
 
@@ -809,28 +788,24 @@ fn state_type(context_type: &Type) -> Result<&Type> {
         .segments
         .last()
         .expect("context_type validates a non-empty path");
-
     let PathArguments::AngleBracketed(arguments) = &segment.arguments else {
         return Err(Error::new_spanned(
             context_type,
             "`Context` requires exactly one application-state type parameter",
         ));
     };
-
     if arguments.args.len() != 1 {
         return Err(Error::new_spanned(
             arguments,
             "`Context` requires exactly one application-state type parameter",
         ));
     }
-
     let Some(GenericArgument::Type(state_type)) = arguments.args.first() else {
         return Err(Error::new_spanned(
             arguments,
             "`Context` requires an application-state type parameter",
         ));
     };
-
     Ok(state_type)
 }
 
@@ -842,14 +817,12 @@ fn validate_name(name: &LitStr) -> Result<()> {
             "invalid Discord chat-input command name; expected 1-32 characters matching Discord's application-command naming rules",
         ));
     }
-
     if value.to_lowercase() != value {
         return Err(Error::new(
             name.span(),
             "Discord chat-input command names must use lowercase variants when available",
         ));
     }
-
     Ok(())
 }
 
@@ -861,6 +834,5 @@ fn validate_description(description: &LitStr) -> Result<()> {
             "Discord slash-command descriptions must contain between 1 and 100 characters",
         ));
     }
-
     Ok(())
 }
