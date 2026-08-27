@@ -1,8 +1,8 @@
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
-    Error, FnArg, GenericArgument, ItemFn, PathArguments, Result, ReturnType, Type,
-    ext::IdentExt, parse2,
+    Error, FnArg, GenericArgument, ItemFn, PathArguments, Result, ReturnType, Type, ext::IdentExt,
+    parse2,
 };
 
 pub(crate) fn expand(attribute: TokenStream, item: TokenStream) -> Result<TokenStream> {
