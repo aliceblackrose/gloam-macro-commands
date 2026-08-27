@@ -58,8 +58,9 @@ mod admin {
             _ctx: Context<State>,
             #[description = "Search query"]
             #[autocomplete = complete_query]
-            _query: String,
+            query: String,
         ) -> Result<()> {
+            let _ = query;
             Ok(())
         }
     }
