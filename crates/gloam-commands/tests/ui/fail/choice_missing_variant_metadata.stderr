@@ -1,0 +1,5 @@
+error: command-choice variants require `#[choice(name = "...")]`
+ --> tests/ui/fail/choice_missing_variant_metadata.rs:7:5
+  |
+7 |     Safe,
+  |     ^^^^
