@@ -8,6 +8,30 @@ pub enum Error {
     #[error("duplicate slash command `{0}`")]
     DuplicateCommand(&'static str),
 
+    /// The configured global command-concurrency limit was zero.
+    #[error("max concurrent commands must be greater than zero")]
+    InvalidConcurrencyLimit,
+
+    /// An `INTERACTION_CREATE` payload could not be decoded.
+    #[error("invalid Discord interaction payload: {0}")]
+    InvalidInteractionPayload(#[from] serde_json::Error),
+
+    /// An application-command interaction did not include command data.
+    #[error("application-command interaction is missing command data")]
+    MissingApplicationCommandData,
+
+    /// Manual dispatch was attempted outside a Tokio runtime.
+    #[error("command dispatch requires an active Tokio runtime")]
+    NoAsyncRuntime,
+
+    /// The internal command scheduler was closed unexpectedly.
+    #[error("command execution scheduler is closed")]
+    CommandSchedulerClosed,
+
+    /// A spawned command task failed to complete normally.
+    #[error("command task failed: {0}")]
+    CommandTask(#[from] tokio::task::JoinError),
+
     /// An error returned by Gloamwire.
     #[error(transparent)]
     Gloamwire(#[from] gloamwire::Error),
