@@ -21,8 +21,8 @@ use tokio::{
 
 use crate::{
     AutocompleteChoice, AutocompleteChoiceValue, AutocompleteContext, AutocompleteHandler,
-    CommandFuture, CommandHandler, CommandRegistry, CommandTask, Context, DispatchOutcome, Error,
-    Registration, Result, Runtime, SlashCommand,
+    CommandFuture, CommandHandler, CommandPolicy, CommandRegistry, CommandTask, Context,
+    DispatchOutcome, Error, Registration, Result, Runtime, SlashCommand,
 };
 
 /// Default upper bound for simultaneously executing command handlers.
@@ -251,6 +251,10 @@ where
             .command
             .handler()
             .ok_or_else(|| Error::UnknownCommandPath(resolved.path.join(" ")))?;
+        let policy = resolved
+            .command
+            .shared_policy()
+            .ok_or_else(|| Error::UnknownCommandPath(resolved.path.join(" ")))?;
         let context = Context::new(
             runtime,
             interaction,
@@ -263,6 +267,7 @@ where
         Ok(PreparedDispatch::Command(PreparedCommand {
             command_name: descriptor.name,
             handler,
+            policy,
             context,
             command_slots: Arc::clone(&self.command_slots),
         }))
@@ -471,6 +476,7 @@ fn focused_option_index(
 struct PreparedCommand<D> {
     command_name: &'static str,
     handler: CommandHandler<D>,
+    policy: Arc<CommandPolicy<D>>,
     context: Context<D>,
     command_slots: Arc<Semaphore>,
 }
@@ -482,10 +488,19 @@ where
     fn try_execute(self) -> Result<Option<CommandFuture>> {
         let Self {
             handler,
+            policy,
             context,
             command_slots,
             ..
         } = self;
+        let command_permit = match policy.command_slots() {
+            Some(slots) => match Arc::clone(slots).try_acquire_owned() {
+                Ok(permit) => Some(permit),
+                Err(TryAcquireError::NoPermits) => return Ok(None),
+                Err(TryAcquireError::Closed) => return Err(Error::CommandSchedulerClosed),
+            },
+            None => None,
+        };
         let permit = match command_slots.try_acquire_owned() {
             Ok(permit) => permit,
             Err(TryAcquireError::NoPermits) => return Ok(None),
@@ -494,6 +509,8 @@ where
 
         Ok(Some(Box::pin(async move {
             let _permit = permit;
+            let _command_permit = command_permit;
+            policy.evaluate(&context).await?;
             (handler)(context).await
         })))
     }
