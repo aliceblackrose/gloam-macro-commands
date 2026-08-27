@@ -2,7 +2,7 @@
 
 A focused Discord **slash-command framework** for [Gloamwire](https://github.com/aliceblackrose/gloamwire), written for Rust 1.98 and Edition 2024.
 
-> **Current status:** Phase 9 — autocomplete.
+> **Current status:** Phase 10 — checks and execution policy.
 
 The framework is intentionally limited to Discord chat-input application commands. It does **not** implement prefix commands, message-content parsing, or a hybrid prefix/slash command abstraction.
 
@@ -17,6 +17,8 @@ The framework is intentionally limited to Discord chat-input application command
 - Produce useful compile-time diagnostics for invalid command signatures.
 - Keep command execution from blocking Gateway polling.
 - Bound framework-owned command and autocomplete tasks instead of accumulating unbounded scheduler waiters.
+- Layer per-command execution limits beneath the framework-wide concurrency bound without queued waiter tasks.
+- Keep command eligibility checks deterministic, composable, and separate from Discord registration permissions.
 - Preserve Discord interaction acknowledgement rules across cloned command contexts.
 - Model Discord-native subcommands and subcommand groups without a parallel nested registry.
 - Keep static choice registration and typed choice extraction derived from one enum definition.
@@ -34,7 +36,7 @@ The proc-macro crate contains no Discord runtime behavior. Generated code target
 
 ## Current API
 
-Typed slash commands can be declared with `#[command]`, composed into Discord-native trees with `#[group]`, dynamically complete eligible options through `#[autocomplete]`, synchronized with Discord, respond through `Context<D>`, and execute through the managed Gloamwire shard runtime:
+Typed slash commands can be declared with `#[command]`, composed into Discord-native trees with `#[group]`, dynamically complete eligible options through `#[autocomplete]`, constrained with runtime execution policy, synchronized with Discord, respond through `Context<D>`, and execute through the managed Gloamwire shard runtime:
 
 ```rust,ignore
 use gloam_commands::prelude::*;
@@ -206,6 +208,45 @@ Autocomplete is supported only for Discord String, Integer, and Number options (
 
 Autocomplete handlers return `Result<Vec<AutocompleteChoice>>`. The framework validates at most 25 results, choice-name/value limits, Discord numeric ranges, and value-kind compatibility with the focused option. It then converts the results directly into Gloamwire's autocomplete callback model and sends the callback; applications do not manually acknowledge the autocomplete interaction.
 
+### Checks and execution policy
+
+Execution policy is attached to command leaves and evaluated immediately before the user handler. Custom checks use a dedicated typed async function:
+
+```rust,ignore
+use gloam_commands::prelude::*;
+use gloamwire::model::Permissions;
+
+struct State;
+
+#[check]
+async fn feature_enabled(ctx: Context<State>) -> Result<bool> {
+    let _state = ctx.data();
+    Ok(true)
+}
+
+#[command(
+    description = "Moderate a guild",
+    check = feature_enabled,
+    guild_only,
+    member_permissions = Permissions::BAN_MEMBERS,
+    bot_permissions = Permissions::BAN_MEMBERS,
+    cooldown = 5,
+    max_concurrency = 2
+)]
+async fn moderate(ctx: Context<State>) -> Result<()> {
+    ctx.reply("Policy passed").await?;
+    Ok(())
+}
+```
+
+`#[command]` accepts repeated `check = handler_path` entries, repeated explicit `context = "guild" | "bot_dm" | "private_channel"` entries, or the `guild_only` shorthand. It also accepts typed Gloamwire `Permissions` expressions through `member_permissions = ...` and `bot_permissions = ...`, a per-user cooldown in whole seconds through `cooldown = ...`, and an additional per-command concurrency limit through `max_concurrency = ...`.
+
+Policy evaluation order is deterministic: allowed interaction context, invoking-member permissions, application permissions, custom checks in declaration order, cooldown reservation, then the user handler. A failed step returns a framework error and prevents later steps or handler business logic from running. Per-command capacity and the framework-wide execution bound are both reserved non-blockingly before a task is spawned, so saturation never creates an unbounded queue of waiter tasks.
+
+Cooldown state and per-command capacity are shared by the registered leaf rather than recreated per invocation. Cooldowns are scoped by invoking `UserId`. `max_concurrency` must be greater than zero and layers beneath `FrameworkBuilder::max_concurrent_commands(...)`; it does not replace the global bound.
+
+Runtime execution policy is intentionally separate from Discord command registration permissions. `member_permissions` and `bot_permissions` are eligibility checks against the received interaction immediately before execution; they do not mutate Discord's registered command permission/default-member-permission fields.
+
 ### Subcommands and groups
 
 `#[group]` applies to an inline module and generates a Discord-native command tree. Direct `#[command]` functions become subcommands. One nested `#[group]` level becomes a Discord subcommand group containing its direct command leaves:
@@ -303,7 +344,9 @@ The managed runtime:
 - resolves native subcommand/subcommand-group branches before handler scheduling;
 - validates exactly one focused leaf option for autocomplete interactions;
 - preserves the receiving `ShardId` in `Context<D>` and `AutocompleteContext<D>`;
-- reserves an execution slot before spawning command or autocomplete handlers, so framework-owned tasks remain bounded;
+- reserves the framework-wide execution slot before spawning command or autocomplete handlers;
+- additionally reserves a command leaf's configured execution slot before spawning normal command handlers;
+- evaluates normal command execution policy before invoking handler business logic;
 - continues polling the Gateway while handlers execute.
 
 Applications that already own a Gloamwire Gateway loop can call `Framework::dispatch(...)` or `Framework::dispatch_shard(...)` instead. Manual dispatch returns `DispatchOutcome`, including `Ignored`, `Unregistered`, `AtCapacity`, and a `Spawned(CommandTask)` handle for both command and autocomplete handler tasks.
@@ -319,9 +362,17 @@ Applications that already own a Gloamwire Gateway loop can call `Framework::disp
 - supports inline static choices on String, Integer, and Number options;
 - supports typed `CommandChoice` enum parameters through a bare `#[choice]` marker;
 - supports `#[autocomplete = handler_path]` on String, Integer, and Number options;
-- validates command names, descriptions, parameter descriptions, option ordering, option count, supported types, constraints, static choices, and autocomplete compatibility;
+- supports runtime policy through `check`, `context`, `guild_only`, `member_permissions`, `bot_permissions`, `cooldown`, and `max_concurrency` arguments;
+- validates command names, descriptions, parameter descriptions, option ordering, option count, supported types, constraints, static choices, autocomplete compatibility, and execution-policy argument conflicts;
 - preserves the original Rust function;
-- generates the static descriptor and erased extraction/handler adapter used by `commands![...]`.
+- generates the static descriptor, execution policy, and erased extraction/handler adapter used by `commands![...]`.
+
+`#[check]` currently:
+
+- requires an `async fn` with exactly one `Context<D>` parameter;
+- requires a `Result<bool>` return type;
+- preserves the original Rust function;
+- generates the erased adapter referenced by `check = handler_path` command policy entries.
 
 `#[autocomplete]` currently:
 

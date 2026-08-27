@@ -1,8 +1,8 @@
-use std::{future::Future, pin::Pin};
+use std::{future::Future, pin::Pin, sync::Arc};
 
 use gloamwire::model::{ApplicationCommandNumericValue, ApplicationCommandOptionType};
 
-use crate::{AutocompleteHandler, AutocompleteHandlerDescriptor, Context, Result};
+use crate::{AutocompleteHandler, AutocompleteHandlerDescriptor, CommandPolicy, Context, Result};
 
 /// Boxed future returned by generated slash-command adapters.
 pub type CommandFuture = Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>;
@@ -207,6 +207,7 @@ impl CommandDescriptor {
 struct SlashCommandLeaf<D> {
     handler: CommandHandler<D>,
     autocomplete: Vec<AutocompleteHandlerDescriptor<D>>,
+    policy: Arc<CommandPolicy<D>>,
 }
 
 enum SlashCommandKind<D> {
@@ -228,7 +229,12 @@ impl<D> SlashCommand<D> {
     /// Creates a leaf slash command from static metadata and an erased handler.
     #[must_use]
     pub fn new(descriptor: &'static CommandDescriptor, handler: CommandHandler<D>) -> Self {
-        Self::new_with_autocomplete(descriptor, handler, Vec::new())
+        Self::new_with_autocomplete_and_policy(
+            descriptor,
+            handler,
+            Vec::new(),
+            CommandPolicy::new(),
+        )
     }
 
     /// Creates a leaf slash command with generated autocomplete handlers.
@@ -238,11 +244,38 @@ impl<D> SlashCommand<D> {
         handler: CommandHandler<D>,
         autocomplete: Vec<AutocompleteHandlerDescriptor<D>>,
     ) -> Self {
+        Self::new_with_autocomplete_and_policy(
+            descriptor,
+            handler,
+            autocomplete,
+            CommandPolicy::new(),
+        )
+    }
+
+    /// Creates a leaf slash command with an execution policy.
+    #[must_use]
+    pub fn new_with_policy(
+        descriptor: &'static CommandDescriptor,
+        handler: CommandHandler<D>,
+        policy: CommandPolicy<D>,
+    ) -> Self {
+        Self::new_with_autocomplete_and_policy(descriptor, handler, Vec::new(), policy)
+    }
+
+    /// Creates a leaf slash command with generated autocomplete handlers and an execution policy.
+    #[must_use]
+    pub fn new_with_autocomplete_and_policy(
+        descriptor: &'static CommandDescriptor,
+        handler: CommandHandler<D>,
+        autocomplete: Vec<AutocompleteHandlerDescriptor<D>>,
+        policy: CommandPolicy<D>,
+    ) -> Self {
         Self {
             descriptor,
             kind: SlashCommandKind::Leaf(SlashCommandLeaf {
                 handler,
                 autocomplete,
+                policy: Arc::new(policy),
             }),
         }
     }
@@ -267,6 +300,22 @@ impl<D> SlashCommand<D> {
     pub const fn handler(&self) -> Option<CommandHandler<D>> {
         match &self.kind {
             SlashCommandKind::Leaf(leaf) => Some(leaf.handler),
+            SlashCommandKind::Group(_) => None,
+        }
+    }
+
+    /// Returns the execution policy when this node is a leaf command.
+    #[must_use]
+    pub fn policy(&self) -> Option<&CommandPolicy<D>> {
+        match &self.kind {
+            SlashCommandKind::Leaf(leaf) => Some(&leaf.policy),
+            SlashCommandKind::Group(_) => None,
+        }
+    }
+
+    pub(crate) fn shared_policy(&self) -> Option<Arc<CommandPolicy<D>>> {
+        match &self.kind {
+            SlashCommandKind::Leaf(leaf) => Some(Arc::clone(&leaf.policy)),
             SlashCommandKind::Group(_) => None,
         }
     }

@@ -192,17 +192,19 @@ Support Discord application-command autocomplete as a first-class interaction pa
 
 ## Phase 10 — Checks and execution policy
 
+**Status:** Complete
+
 Add composable execution policy around slash-command handlers.
 
-- [ ] Add custom checks.
-- [ ] Add guild-only checks.
-- [ ] Add context/DM restrictions using Discord application-command contexts.
-- [ ] Add member-permission checks.
-- [ ] Add bot-permission checks where applicable.
-- [ ] Add per-command cooldown policy.
-- [ ] Add configurable concurrency limits.
-- [ ] Define deterministic check ordering.
-- [ ] Keep Discord registration permissions separate from runtime checks.
+- [x] Add custom checks.
+- [x] Add guild-only checks.
+- [x] Add context/DM restrictions using Discord application-command contexts.
+- [x] Add member-permission checks.
+- [x] Add bot-permission checks where applicable.
+- [x] Add per-command cooldown policy.
+- [x] Add configurable concurrency limits.
+- [x] Define deterministic check ordering.
+- [x] Keep Discord registration permissions separate from runtime checks.
 
 **Exit criteria:** command eligibility and execution limits are composable, testable, and independent from handler business logic.
 

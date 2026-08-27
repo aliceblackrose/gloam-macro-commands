@@ -1,3 +1,6 @@
+use std::time::Duration;
+
+use gloamwire::model::Permissions;
 use thiserror::Error;
 
 /// Errors produced by the slash-command framework.
@@ -40,6 +43,64 @@ pub enum Error {
     /// An autocomplete handler returned choices Discord cannot accept.
     #[error("invalid autocomplete response: {0}")]
     InvalidAutocompleteResponse(String),
+
+    /// Static command execution-policy configuration was invalid.
+    #[error("invalid command execution policy at `{0}`")]
+    InvalidCommandPolicy(String),
+
+    /// The interaction context did not satisfy this command's execution policy.
+    #[error("slash command `{0}` is not available in this interaction context")]
+    CommandContextNotAllowed(String),
+
+    /// The invoking member did not have every permission required by the command.
+    #[error(
+        "slash command `{path}` requires member permissions {required:?}, but the interaction supplied {actual:?}"
+    )]
+    MissingMemberPermissions {
+        /// Resolved command path.
+        path: String,
+        /// Required member permissions.
+        required: Permissions,
+        /// Permissions supplied by Discord for the invoking member.
+        actual: Permissions,
+    },
+
+    /// The application did not have every permission required by the command.
+    #[error(
+        "slash command `{path}` requires application permissions {required:?}, but the interaction supplied {actual:?}"
+    )]
+    MissingBotPermissions {
+        /// Resolved command path.
+        path: String,
+        /// Required application permissions.
+        required: Permissions,
+        /// Application permissions supplied by Discord for the interaction channel.
+        actual: Permissions,
+    },
+
+    /// A custom command check denied execution.
+    #[error("slash command `{path}` failed custom check `{check}`")]
+    CommandCheckFailed {
+        /// Resolved command path.
+        path: String,
+        /// Generated custom-check name.
+        check: &'static str,
+    },
+
+    /// A command cooldown could not identify the invoking user.
+    #[error(
+        "slash command `{0}` cannot apply its cooldown because the invoking user is unavailable"
+    )]
+    CommandUserUnavailable(String),
+
+    /// A per-user command cooldown is still active.
+    #[error("slash command `{path}` is on cooldown for another {retry_after:?}")]
+    CommandOnCooldown {
+        /// Resolved command path.
+        path: String,
+        /// Remaining cooldown duration.
+        retry_after: Duration,
+    },
 
     /// The configured global command-concurrency limit was zero.
     #[error("max concurrent commands must be greater than zero")]

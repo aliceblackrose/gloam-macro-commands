@@ -1,0 +1,5 @@
+error: command check context parameter must have type `Context<D>`
+ --> tests/ui/fail/check_wrong_context.rs:6:26
+  |
+6 | async fn predicate(_ctx: ()) -> Result<bool> {
+  |                          ^^

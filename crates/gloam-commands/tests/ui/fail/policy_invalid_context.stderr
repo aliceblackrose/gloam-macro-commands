@@ -1,0 +1,5 @@
+error: unsupported command context; expected `guild`, `bot_dm`, or `private_channel`
+ --> tests/ui/fail/policy_invalid_context.rs:7:54
+  |
+7 | #[command(description = "Invalid context", context = "thread")]
+  |                                                      ^^^^^^^^

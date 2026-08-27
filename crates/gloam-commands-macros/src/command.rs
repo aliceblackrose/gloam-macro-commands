@@ -4,8 +4,8 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use regex::Regex;
 use syn::{
-    Attribute, Error, Expr, ExprLit, ExprUnary, FnArg, GenericArgument, Ident, ItemFn, Lit, LitStr,
-    Meta, Pat, Path, PathArguments, Result, ReturnType, Token, Type, UnOp,
+    Attribute, Error, Expr, ExprLit, ExprUnary, FnArg, GenericArgument, Ident, ItemFn, Lit, LitInt,
+    LitStr, Meta, Pat, Path, PathArguments, Result, ReturnType, Token, Type, UnOp,
     ext::IdentExt,
     parse::{Parse, ParseStream},
     parse2,
@@ -25,34 +25,144 @@ const MAX_NUMBER_VALUE: f64 = 9_007_199_254_740_992.0;
 const MAX_STRING_LENGTH: u32 = 6_000;
 const MAX_CHOICE_STRING_LENGTH: usize = 100;
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum CommandContext {
+    Guild,
+    BotDm,
+    PrivateChannel,
+}
+
+impl CommandContext {
+    fn parse(value: &LitStr) -> Result<Self> {
+        match value.value().as_str() {
+            "guild" => Ok(Self::Guild),
+            "bot_dm" => Ok(Self::BotDm),
+            "private_channel" => Ok(Self::PrivateChannel),
+            _ => Err(Error::new(
+                value.span(),
+                "unsupported command context; expected `guild`, `bot_dm`, or `private_channel`",
+            )),
+        }
+    }
+
+    fn tokens(self) -> TokenStream {
+        match self {
+            Self::Guild => quote! { ::gloam_commands::__private::InteractionContextType::GUILD },
+            Self::BotDm => quote! { ::gloam_commands::__private::InteractionContextType::BOT_DM },
+            Self::PrivateChannel => {
+                quote! { ::gloam_commands::__private::InteractionContextType::PRIVATE_CHANNEL }
+            }
+        }
+    }
+}
+
 struct CommandArgs {
     name: Option<LitStr>,
     description: Option<LitStr>,
+    checks: Vec<Path>,
+    contexts: Vec<CommandContext>,
+    guild_only: Option<Ident>,
+    member_permissions: Option<Expr>,
+    bot_permissions: Option<Expr>,
+    cooldown_seconds: Option<u64>,
+    max_concurrency: Option<usize>,
 }
 
 impl Parse for CommandArgs {
     fn parse(input: ParseStream<'_>) -> Result<Self> {
         let mut name = None;
         let mut description = None;
+        let mut checks = Vec::new();
+        let mut check_names = HashSet::new();
+        let mut contexts = Vec::new();
+        let mut context_kinds = HashSet::new();
+        let mut guild_only = None;
+        let mut member_permissions = None;
+        let mut bot_permissions = None;
+        let mut cooldown_seconds = None;
+        let mut max_concurrency = None;
 
         while !input.is_empty() {
             let key = input.call(Ident::parse_any)?;
-            input.parse::<Token![=]>()?;
-            let value = input.parse::<LitStr>()?;
 
-            if key == "name" {
-                if name.replace(value).is_some() {
-                    return Err(Error::new(key.span(), "duplicate `name` argument"));
-                }
-            } else if key == "description" {
-                if description.replace(value).is_some() {
-                    return Err(Error::new(key.span(), "duplicate `description` argument"));
+            if key == "guild_only" {
+                if guild_only.replace(key.clone()).is_some() {
+                    return Err(Error::new(key.span(), "duplicate `guild_only` argument"));
                 }
             } else {
-                return Err(Error::new(
-                    key.span(),
-                    "unsupported command argument; expected `name` or `description`",
-                ));
+                input.parse::<Token![=]>()?;
+                if key == "name" {
+                    let value = input.parse::<LitStr>()?;
+                    if name.replace(value).is_some() {
+                        return Err(Error::new(key.span(), "duplicate `name` argument"));
+                    }
+                } else if key == "description" {
+                    let value = input.parse::<LitStr>()?;
+                    if description.replace(value).is_some() {
+                        return Err(Error::new(key.span(), "duplicate `description` argument"));
+                    }
+                } else if key == "check" {
+                    let path = input.parse::<Path>()?;
+                    validate_handler_path(&path, &key, "check")?;
+                    let path_name = path_display(&path);
+                    if !check_names.insert(path_name) {
+                        return Err(Error::new_spanned(path, "duplicate command check"));
+                    }
+                    checks.push(path);
+                } else if key == "context" {
+                    let value = input.parse::<LitStr>()?;
+                    let context = CommandContext::parse(&value)?;
+                    if !context_kinds.insert(context) {
+                        return Err(Error::new(value.span(), "duplicate command context"));
+                    }
+                    contexts.push(context);
+                } else if key == "member_permissions" {
+                    let value = input.parse::<Expr>()?;
+                    if member_permissions.replace(value).is_some() {
+                        return Err(Error::new(
+                            key.span(),
+                            "duplicate `member_permissions` argument",
+                        ));
+                    }
+                } else if key == "bot_permissions" {
+                    let value = input.parse::<Expr>()?;
+                    if bot_permissions.replace(value).is_some() {
+                        return Err(Error::new(
+                            key.span(),
+                            "duplicate `bot_permissions` argument",
+                        ));
+                    }
+                } else if key == "cooldown" {
+                    let value = input.parse::<LitInt>()?;
+                    let seconds = value.base10_parse::<u64>().map_err(|_| {
+                        Error::new(value.span(), "`cooldown` must be a non-negative integer")
+                    })?;
+                    if cooldown_seconds.replace(seconds).is_some() {
+                        return Err(Error::new(key.span(), "duplicate `cooldown` argument"));
+                    }
+                } else if key == "max_concurrency" {
+                    let value = input.parse::<LitInt>()?;
+                    let limit = value.base10_parse::<usize>().map_err(|_| {
+                        Error::new(value.span(), "`max_concurrency` must be a positive integer")
+                    })?;
+                    if limit == 0 {
+                        return Err(Error::new(
+                            value.span(),
+                            "`max_concurrency` must be greater than zero",
+                        ));
+                    }
+                    if max_concurrency.replace(limit).is_some() {
+                        return Err(Error::new(
+                            key.span(),
+                            "duplicate `max_concurrency` argument",
+                        ));
+                    }
+                } else {
+                    return Err(Error::new(
+                        key.span(),
+                        "unsupported command argument; expected `name`, `description`, `check`, `context`, `guild_only`, `member_permissions`, `bot_permissions`, `cooldown`, or `max_concurrency`",
+                    ));
+                }
             }
 
             if input.is_empty() {
@@ -61,7 +171,26 @@ impl Parse for CommandArgs {
             input.parse::<Token![,]>()?;
         }
 
-        Ok(Self { name, description })
+        if let Some(guild_only) = &guild_only
+            && !contexts.is_empty()
+        {
+            return Err(Error::new(
+                guild_only.span(),
+                "`guild_only` cannot be combined with explicit `context = ...` arguments",
+            ));
+        }
+
+        Ok(Self {
+            name,
+            description,
+            checks,
+            contexts,
+            guild_only,
+            member_permissions,
+            bot_permissions,
+            cooldown_seconds,
+            max_concurrency,
+        })
     }
 }
 
@@ -170,14 +299,24 @@ struct OptionAttributes {
 
 pub(crate) fn expand(attribute: TokenStream, item: TokenStream) -> Result<TokenStream> {
     let args = parse2::<CommandArgs>(attribute)?;
+    let CommandArgs {
+        name,
+        description,
+        checks,
+        contexts,
+        guild_only,
+        member_permissions,
+        bot_permissions,
+        cooldown_seconds,
+        max_concurrency,
+    } = args;
     let mut function = parse2::<ItemFn>(item)?;
     validate_signature(&function)?;
 
     let function_name = function.sig.ident.clone();
-    let command_name = args
-        .name
+    let command_name = name
         .unwrap_or_else(|| LitStr::new(&function_name.unraw().to_string(), function_name.span()));
-    let description = args.description.ok_or_else(|| {
+    let description = description.ok_or_else(|| {
         Error::new(
             function_name.span(),
             "slash commands require `description = \"...\"`",
@@ -240,18 +379,77 @@ pub(crate) fn expand(attribute: TokenStream, item: TokenStream) -> Result<TokenS
             })
         }
     };
-    let command_factory = if autocomplete_handlers.is_empty() {
-        quote! {
+
+    let has_policy = !checks.is_empty()
+        || !contexts.is_empty()
+        || guild_only.is_some()
+        || member_permissions.is_some()
+        || bot_permissions.is_some()
+        || cooldown_seconds.is_some()
+        || max_concurrency.is_some();
+    let mut policy = quote! { ::gloam_commands::CommandPolicy::new() };
+    if guild_only.is_some() {
+        policy = quote! { (#policy).guild_only() };
+    } else if !contexts.is_empty() {
+        let contexts = contexts.iter().copied().map(CommandContext::tokens);
+        policy = quote! { (#policy).contexts([#(#contexts),*]) };
+    }
+    if let Some(permissions) = &member_permissions {
+        policy = quote! { (#policy).member_permissions(#permissions) };
+    }
+    if let Some(permissions) = &bot_permissions {
+        policy = quote! { (#policy).bot_permissions(#permissions) };
+    }
+    for check in &checks {
+        let adapter = check_adapter_path(check);
+        let check_name = LitStr::new(
+            &path_display(check),
+            check
+                .segments
+                .last()
+                .expect("check paths are validated as non-empty")
+                .ident
+                .span(),
+        );
+        policy = quote! {
+            (#policy).check(::gloam_commands::CheckDescriptor::new(#check_name, #adapter))
+        };
+    }
+    if let Some(seconds) = cooldown_seconds {
+        policy = quote! {
+            (#policy).cooldown(::std::time::Duration::from_secs(#seconds))
+        };
+    }
+    if let Some(limit) = max_concurrency {
+        policy = quote! { (#policy).max_concurrency(#limit) };
+    }
+
+    let command_factory = match (autocomplete_handlers.is_empty(), has_policy) {
+        (true, false) => quote! {
             ::gloam_commands::SlashCommand::new(&DESCRIPTOR, #handler_name)
-        }
-    } else {
-        quote! {
+        },
+        (false, false) => quote! {
             ::gloam_commands::SlashCommand::new_with_autocomplete(
                 &DESCRIPTOR,
                 #handler_name,
                 ::std::vec![#(#autocomplete_handlers),*],
             )
-        }
+        },
+        (true, true) => quote! {
+            ::gloam_commands::SlashCommand::new_with_policy(
+                &DESCRIPTOR,
+                #handler_name,
+                #policy,
+            )
+        },
+        (false, true) => quote! {
+            ::gloam_commands::SlashCommand::new_with_autocomplete_and_policy(
+                &DESCRIPTOR,
+                #handler_name,
+                ::std::vec![#(#autocomplete_handlers),*],
+                #policy,
+            )
+        },
     };
 
     Ok(quote! {
@@ -274,6 +472,29 @@ pub(crate) fn expand(attribute: TokenStream, item: TokenStream) -> Result<TokenS
             #command_factory
         }
     })
+}
+
+fn validate_handler_path(path: &Path, key: &Ident, kind: &str) -> Result<()> {
+    if path.segments.is_empty()
+        || path
+            .segments
+            .iter()
+            .any(|segment| !matches!(segment.arguments, PathArguments::None))
+    {
+        return Err(Error::new(
+            key.span(),
+            format!("`{kind}` requires a handler function path"),
+        ));
+    }
+    Ok(())
+}
+
+fn path_display(path: &Path) -> String {
+    path.segments
+        .iter()
+        .map(|segment| segment.ident.unraw().to_string())
+        .collect::<Vec<_>>()
+        .join("::")
 }
 
 fn validate_signature(function: &ItemFn) -> Result<()> {
@@ -1073,6 +1294,17 @@ fn autocomplete_adapter_path(path: &Path) -> Path {
         .expect("autocomplete handler paths are validated as non-empty");
     let suffix = segment.ident.unraw().to_string();
     segment.ident = format_ident!("__gloam_autocomplete_{suffix}", span = segment.ident.span());
+    adapter
+}
+
+fn check_adapter_path(path: &Path) -> Path {
+    let mut adapter = path.clone();
+    let segment = adapter
+        .segments
+        .last_mut()
+        .expect("check handler paths are validated as non-empty");
+    let suffix = segment.ident.unraw().to_string();
+    segment.ident = format_ident!("__gloam_check_{suffix}", span = segment.ident.span());
     adapter
 }
 

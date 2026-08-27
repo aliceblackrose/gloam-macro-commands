@@ -1,0 +1,5 @@
+error: command checks must be declared with `async fn`
+ --> tests/ui/fail/check_non_async.rs:8:1
+  |
+8 | fn predicate(_ctx: Context<State>) -> Result<bool> {
+  | ^^

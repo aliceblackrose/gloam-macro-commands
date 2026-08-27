@@ -12,6 +12,7 @@ mod dispatch;
 mod error;
 mod framework;
 mod options;
+mod policy;
 mod registration;
 mod registry;
 mod response;
@@ -29,8 +30,9 @@ pub use context::Context;
 pub use dispatch::{CommandTask, DispatchOutcome};
 pub use error::{Error, Result};
 pub use framework::{DEFAULT_MAX_CONCURRENT_COMMANDS, Framework, FrameworkBuilder};
-pub use gloam_commands_macros::{CommandChoice, autocomplete, command, commands, group};
+pub use gloam_commands_macros::{CommandChoice, autocomplete, check, command, commands, group};
 pub use options::{CommandChoice, CommandOption, CommandOptions};
+pub use policy::{CheckDescriptor, CheckFuture, CheckHandler, CommandPolicy};
 pub use registration::Registration;
 pub use registry::CommandRegistry;
 pub use runtime::Runtime;
@@ -38,13 +40,14 @@ pub use runtime::Runtime;
 /// Implementation details referenced by generated macro code.
 #[doc(hidden)]
 pub mod __private {
-    pub use gloamwire::model::ApplicationCommandOptionType;
+    pub use gloamwire::model::{ApplicationCommandOptionType, InteractionContextType, Permissions};
 }
 
 /// Common imports for applications using the framework.
 pub mod prelude {
     pub use crate::{
-        AutocompleteChoice, AutocompleteContext, CommandChoice, Context, DispatchOutcome,
-        Framework, Registration, Result, autocomplete, command, commands, group,
+        AutocompleteChoice, AutocompleteContext, CheckDescriptor, CommandChoice, CommandPolicy,
+        Context, DispatchOutcome, Framework, Registration, Result, autocomplete, check, command,
+        commands, group,
     };
 }
