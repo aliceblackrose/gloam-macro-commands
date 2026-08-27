@@ -2,9 +2,7 @@ use std::{future::Future, pin::Pin, sync::Arc};
 
 use gloamwire::model::{ApplicationCommandNumericValue, ApplicationCommandOptionType};
 
-use crate::{
-    AutocompleteHandler, AutocompleteHandlerDescriptor, CommandPolicy, Context, Result,
-};
+use crate::{AutocompleteHandler, AutocompleteHandlerDescriptor, CommandPolicy, Context, Result};
 
 /// Boxed future returned by generated slash-command adapters.
 pub type CommandFuture = Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>;
