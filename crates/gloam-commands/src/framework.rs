@@ -21,8 +21,8 @@ use tokio::{
 
 use crate::{
     AutocompleteChoice, AutocompleteChoiceValue, AutocompleteContext, AutocompleteHandler,
-    CommandFuture, CommandHandler, CommandPolicy, CommandRegistry, CommandTask, Context,
-    DispatchOutcome, Error, Registration, Result, Runtime, SlashCommand,
+    CommandErrorHandler, CommandFuture, CommandHandler, CommandHook, CommandPolicy, CommandRegistry,
+    CommandTask, Context, DispatchOutcome, Error, Registration, Result, Runtime, SlashCommand,
 };
 
 /// Default upper bound for simultaneously executing command handlers.
@@ -43,6 +43,9 @@ pub struct Framework<D> {
     registration: Registration,
     max_concurrent_commands: usize,
     command_slots: Arc<Semaphore>,
+    before_hooks: Arc<[CommandHook<D>]>,
+    after_hooks: Arc<[CommandHook<D>]>,
+    error_handler: Option<CommandErrorHandler<D>>,
 }
 
 impl<D> Framework<D> {
@@ -270,6 +273,9 @@ where
             policy,
             context,
             command_slots: Arc::clone(&self.command_slots),
+            before_hooks: Arc::clone(&self.before_hooks),
+            after_hooks: Arc::clone(&self.after_hooks),
+            error_handler: self.error_handler,
         }))
     }
 
@@ -312,6 +318,9 @@ pub struct FrameworkBuilder<D> {
     commands: Vec<SlashCommand<D>>,
     registration: Registration,
     max_concurrent_commands: usize,
+    before_hooks: Vec<CommandHook<D>>,
+    after_hooks: Vec<CommandHook<D>>,
+    error_handler: Option<CommandErrorHandler<D>>,
 }
 
 impl<D> FrameworkBuilder<D> {
@@ -323,6 +332,9 @@ impl<D> FrameworkBuilder<D> {
             commands: Vec::new(),
             registration: Registration::None,
             max_concurrent_commands: DEFAULT_MAX_CONCURRENT_COMMANDS,
+            before_hooks: Vec::new(),
+            after_hooks: Vec::new(),
+            error_handler: None,
         }
     }
 
@@ -354,6 +366,40 @@ impl<D> FrameworkBuilder<D> {
         self
     }
 
+    /// Adds a framework-level hook that runs before every normal command handler.
+    ///
+    /// Before hooks run in registration order after execution policy succeeds.
+    /// Returning an error stops later before hooks and prevents the user handler
+    /// from running. The error is routed through the configured command-error
+    /// handler when one is present.
+    #[must_use]
+    pub fn before_command(mut self, hook: CommandHook<D>) -> Self {
+        self.before_hooks.push(hook);
+        self
+    }
+
+    /// Adds a framework-level hook that runs after every started command handler.
+    ///
+    /// After hooks run in registration order even when the user handler returns
+    /// an error. If more than one execution step fails, the first error is
+    /// retained while every after hook is still allowed to run.
+    #[must_use]
+    pub fn after_command(mut self, hook: CommandHook<D>) -> Self {
+        self.after_hooks.push(hook);
+        self
+    }
+
+    /// Configures the centralized handler for normal command execution errors.
+    ///
+    /// The handler receives errors from execution policy, before hooks, the user
+    /// handler, and after hooks. Returning `Ok(())` marks the error as handled;
+    /// returning an error propagates that error from the command task.
+    #[must_use]
+    pub fn command_error_handler(mut self, handler: CommandErrorHandler<D>) -> Self {
+        self.error_handler = Some(handler);
+        self
+    }
+
     /// Validates command registration and builds the framework.
     pub fn build(self) -> Result<Framework<D>> {
         if self.max_concurrent_commands == 0 {
@@ -371,6 +417,9 @@ impl<D> FrameworkBuilder<D> {
             registration: self.registration,
             max_concurrent_commands: self.max_concurrent_commands,
             command_slots: Arc::new(Semaphore::new(self.max_concurrent_commands)),
+            before_hooks: self.before_hooks.into(),
+            after_hooks: self.after_hooks.into(),
+            error_handler: self.error_handler,
         })
     }
 }
@@ -479,6 +528,9 @@ struct PreparedCommand<D> {
     policy: Arc<CommandPolicy<D>>,
     context: Context<D>,
     command_slots: Arc<Semaphore>,
+    before_hooks: Arc<[CommandHook<D>]>,
+    after_hooks: Arc<[CommandHook<D>]>,
+    error_handler: Option<CommandErrorHandler<D>>,
 }
 
 impl<D> PreparedCommand<D>
@@ -491,6 +543,9 @@ where
             policy,
             context,
             command_slots,
+            before_hooks,
+            after_hooks,
+            error_handler,
             ..
         } = self;
         let command_permit = match policy.command_slots() {
@@ -510,9 +565,54 @@ where
         Ok(Some(Box::pin(async move {
             let _permit = permit;
             let _command_permit = command_permit;
-            policy.evaluate(&context).await?;
-            (handler)(context).await
+            execute_command(
+                handler,
+                policy,
+                context,
+                before_hooks,
+                after_hooks,
+                error_handler,
+            )
+            .await
         })))
+    }
+}
+
+async fn execute_command<D>(
+    handler: CommandHandler<D>,
+    policy: Arc<CommandPolicy<D>>,
+    context: Context<D>,
+    before_hooks: Arc<[CommandHook<D>]>,
+    after_hooks: Arc<[CommandHook<D>]>,
+    error_handler: Option<CommandErrorHandler<D>>,
+) -> Result<()>
+where
+    D: Send + Sync + 'static,
+{
+    let result = async {
+        policy.evaluate(&context).await?;
+
+        for hook in before_hooks.iter().copied() {
+            (hook)(context.clone()).await?;
+        }
+
+        let mut result = (handler)(context.clone()).await;
+        for hook in after_hooks.iter().copied() {
+            let hook_result = (hook)(context.clone()).await;
+            if result.is_ok() {
+                result = hook_result;
+            }
+        }
+        result
+    }
+    .await;
+
+    match result {
+        Ok(()) => Ok(()),
+        Err(error) => match error_handler {
+            Some(handler) => (handler)(context, error).await,
+            None => Err(error),
+        },
     }
 }
 
@@ -674,7 +774,7 @@ fn reap_completed_commands(commands: &mut JoinSet<Result<()>>) -> Result<()> {
     while let Some(result) = commands.try_join_next() {
         match result {
             Ok(Ok(())) | Ok(Err(_)) => {
-                // Phase 11 adds configurable centralized command-error handling.
+                // Configured command errors are handled inside the command lifecycle.
             }
             Err(error) => return Err(Error::CommandTask(error)),
         }
