@@ -2,8 +2,10 @@ use std::sync::Arc;
 
 use gloamwire::{
     RestClient,
-    gateway::{GatewayEvent, GatewayIntents, ShardEvent, ShardId, ShardManager},
-    model::{ApplicationCommandType, Interaction, InteractionType},
+    gateway::{
+        GatewayEvent, GatewayIntents, ShardEvent, ShardId, ShardManager, TypedDispatchEvent,
+    },
+    model::{ApplicationCommandType, InteractionType},
 };
 use tokio::{
     runtime::Handle,
@@ -131,7 +133,9 @@ where
             return Ok(PreparedDispatch::Ignored);
         }
 
-        let interaction: Interaction = serde_json::from_value(dispatch.data.clone())?;
+        let TypedDispatchEvent::InteractionCreate(interaction) = dispatch.typed()? else {
+            return Ok(PreparedDispatch::Ignored);
+        };
         if interaction.kind != InteractionType::APPLICATION_COMMAND {
             return Ok(PreparedDispatch::Ignored);
         }
@@ -149,7 +153,7 @@ where
         let descriptor = command.descriptor();
         let handler = command.handler();
         let runtime = Arc::new(self.runtime(rest.clone()));
-        let context = Context::new(runtime, Arc::new(interaction), descriptor.name, shard_id);
+        let context = Context::new(runtime, Arc::from(interaction), descriptor.name, shard_id);
 
         Ok(PreparedDispatch::Command(PreparedCommand {
             command_name: descriptor.name,
