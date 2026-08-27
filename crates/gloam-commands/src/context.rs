@@ -1,24 +1,29 @@
 use std::sync::Arc;
 
-use gloamwire::RestClient;
+use gloamwire::{RestClient, gateway::ShardId, model::Interaction};
 
 use crate::Runtime;
 
 /// Per-execution context passed to slash-command handlers.
-///
-/// Interaction-specific accessors and response helpers are added in later
-/// phases once command dispatch is connected to Gloamwire interactions.
 pub struct Context<D> {
     runtime: Arc<Runtime<D>>,
+    interaction: Arc<Interaction>,
     command_name: &'static str,
+    shard_id: Option<ShardId>,
 }
 
 impl<D> Context<D> {
-    #[allow(dead_code)]
-    pub(crate) fn new(runtime: Arc<Runtime<D>>, command_name: &'static str) -> Self {
+    pub(crate) fn new(
+        runtime: Arc<Runtime<D>>,
+        interaction: Arc<Interaction>,
+        command_name: &'static str,
+        shard_id: Option<ShardId>,
+    ) -> Self {
         Self {
             runtime,
+            interaction,
             command_name,
+            shard_id,
         }
     }
 
@@ -40,10 +45,22 @@ impl<D> Context<D> {
         self.runtime.data()
     }
 
+    /// Returns the Discord interaction that invoked this command.
+    #[must_use]
+    pub fn interaction(&self) -> &Interaction {
+        &self.interaction
+    }
+
     /// Returns the registered slash-command name being executed.
     #[must_use]
     pub const fn command_name(&self) -> &'static str {
         self.command_name
+    }
+
+    /// Returns the Gateway shard that received the interaction when known.
+    #[must_use]
+    pub const fn shard_id(&self) -> Option<ShardId> {
+        self.shard_id
     }
 }
 
@@ -51,7 +68,9 @@ impl<D> Clone for Context<D> {
     fn clone(&self) -> Self {
         Self {
             runtime: Arc::clone(&self.runtime),
+            interaction: Arc::clone(&self.interaction),
             command_name: self.command_name,
+            shard_id: self.shard_id,
         }
     }
 }

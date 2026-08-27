@@ -64,18 +64,20 @@ Implement the first procedural macro without adding typed options yet.
 
 ## Phase 3 — Interaction dispatch and managed runtime
 
+**Status:** Complete
+
 Connect Gloamwire's Gateway interaction stream to registered handlers.
 
-- [ ] Route `INTERACTION_CREATE` application-command interactions.
-- [ ] Ignore unrelated Gateway events without consuming application behavior.
-- [ ] Resolve commands by top-level chat-input command name.
-- [ ] Construct framework-owned `Context<D>` values.
-- [ ] Spawn command handlers without blocking Gateway polling.
-- [ ] Bound concurrent command execution with an explicit semaphore/configuration limit.
-- [ ] Preserve shard identity in command context when available.
-- [ ] Add a managed `Framework::run(...)` path.
-- [ ] Add a manual `Framework::dispatch(...)` path for applications that own their Gateway loop.
-- [ ] Keep required Gateway intents minimal for slash commands.
+- [x] Route `INTERACTION_CREATE` application-command interactions.
+- [x] Ignore unrelated Gateway events without consuming application behavior.
+- [x] Resolve commands by top-level chat-input command name.
+- [x] Construct framework-owned `Context<D>` values.
+- [x] Spawn command handlers without blocking Gateway polling.
+- [x] Bound concurrent command execution with an explicit semaphore/configuration limit.
+- [x] Preserve shard identity in command context when available.
+- [x] Add a managed `Framework::run(...)` path.
+- [x] Add a manual `Framework::dispatch(...)` path for applications that own their Gateway loop.
+- [x] Keep required Gateway intents minimal for slash commands.
 
 **Exit criteria:** `/ping` can execute end-to-end through a real `INTERACTION_CREATE` dispatch while Gateway polling remains responsive.
 
