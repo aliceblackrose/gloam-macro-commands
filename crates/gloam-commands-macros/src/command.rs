@@ -526,7 +526,7 @@ fn parse_inline_choices(kind: OptionKind, choices: Vec<InlineChoiceArgs>) -> Res
             choices[MAX_CHOICES]
                 .name
                 .as_ref()
-                .map_or_else(|| proc_macro2::Span::call_site(), LitStr::span),
+                .map_or_else(proc_macro2::Span::call_site, LitStr::span),
             "Discord command options support at most 25 choices",
         ));
     }
