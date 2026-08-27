@@ -4,7 +4,10 @@ use gloam_commands::{
     CommandDescriptor, CommandFuture, CommandTask, Context, DispatchOutcome, Error, Framework,
     Result, SlashCommand,
 };
-use gloamwire::{RestClient, gateway::{DispatchEvent, GatewayEvent}};
+use gloamwire::{
+    RestClient,
+    gateway::{DispatchEvent, GatewayEvent},
+};
 
 static PING: CommandDescriptor = CommandDescriptor::new("ping", "Check lifecycle behavior");
 
@@ -112,7 +115,13 @@ async fn runs_before_handler_and_after_hooks_in_order() -> Result<()> {
 
     assert_eq!(
         framework.data().events(),
-        ["before-one", "before-two", "handler", "after-one", "after-two"]
+        [
+            "before-one",
+            "before-two",
+            "handler",
+            "after-one",
+            "after-two"
+        ]
     );
     Ok(())
 }
