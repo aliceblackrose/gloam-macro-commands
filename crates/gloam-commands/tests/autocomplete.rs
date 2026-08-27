@@ -35,7 +35,8 @@ mod admin {
         async fn complete_query(
             ctx: AutocompleteContext<State>,
         ) -> Result<Vec<AutocompleteChoice>> {
-            let Some(ApplicationCommandInteractionValue::String(value)) = ctx.focused_value() else {
+            let Some(ApplicationCommandInteractionValue::String(value)) = ctx.focused_value()
+            else {
                 panic!("expected focused string value");
             };
 
@@ -45,10 +46,7 @@ mod admin {
 
             Ok((0..26)
                 .map(|index| {
-                    AutocompleteChoice::string(
-                        format!("Result {index}"),
-                        format!("result-{index}"),
-                    )
+                    AutocompleteChoice::string(format!("Result {index}"), format!("result-{index}"))
                 })
                 .collect())
         }
