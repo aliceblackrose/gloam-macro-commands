@@ -39,7 +39,7 @@ pub mod __private {
 /// Common imports for applications using the framework.
 pub mod prelude {
     pub use crate::{
-        CommandChoice, Context, DispatchOutcome, Framework, Registration, Result, command, commands,
-        group,
+        CommandChoice, Context, DispatchOutcome, Framework, Registration, Result, command,
+        commands, group,
     };
 }
