@@ -63,6 +63,7 @@ Runtime<D>
 Context<D>
   ├── Arc<Runtime<D>>
   ├── Arc<Interaction>
+  ├── Arc<ApplicationCommandInteractionData>
   ├── registered command name
   ├── optional ShardId
   └── Arc<Mutex<ResponseState>>  # shared acknowledgement state
@@ -70,7 +71,7 @@ Context<D>
 
 `D` is application-owned shared state. The framework stores it behind `Arc` so command contexts can be owned values and can safely move into asynchronous handler tasks without requiring `D: Clone`.
 
-There is no global runtime singleton. Clones of one `Context<D>` share both the same interaction and the same response state.
+There is no global runtime singleton. Clones of one `Context<D>` share the same interaction, the same parsed application-command data, and the same response state.
 
 ## Command model
 
@@ -85,11 +86,11 @@ The command macro is responsible for ensuring those two pieces are derived from 
 #[command]
 async fn inspect(
     ctx: Context<State>,
-    user: UserId,
-    verbose: Option<bool>,
+    #[description = "User to inspect"] user: UserId,
+    #[description = "Include extra details"] verbose: Option<bool>,
 )
         │
-        ├── static command metadata
+        ├── static command + option metadata
         │
         └── generated extraction adapter
                  │
@@ -130,6 +131,8 @@ INTERACTION_CREATE
 
 The framework reuses Gloamwire's `Interaction`, `GatewayEvent`, `ShardEvent`, and `ShardManager` types directly rather than creating parallel Discord models. `DispatchEvent::typed()` remains Gloamwire's responsibility; the framework only applies command-specific routing after typed decoding.
 
+For a chat-input invocation, dispatch parses `ApplicationCommandInteractionData` once through Gloamwire, uses that value for command routing, and stores it in `Context<D>`. Generated typed-option adapters therefore extract from the already-parsed command data instead of decoding the interaction payload a second time.
+
 Applications may choose either execution path:
 
 - `Framework::run(...)` owns the managed `ShardManager` event loop;
@@ -169,7 +172,7 @@ Shard identity is copied into `Context<D>` when dispatch originates from `ShardE
 
 ## Context design
 
-`Context<D>` is deliberately slash-command-specific. It exposes the original Gloamwire `Interaction` rather than hiding Discord data behind a duplicate wrapper.
+`Context<D>` is deliberately slash-command-specific. It exposes the original Gloamwire `Interaction` and parsed `ApplicationCommandInteractionData` rather than hiding Discord data behind duplicate wrappers.
 
 Current accessors include:
 
@@ -178,6 +181,7 @@ ctx.data()
 ctx.rest()
 ctx.runtime()
 ctx.interaction()
+ctx.command_data()
 ctx.command_name()
 ctx.shard_id()
 ```
@@ -242,7 +246,7 @@ Explicit `followup` calls require an acknowledged interaction. Automatic `reply`
 
 Supported Rust handler parameters define Discord option schemas and extraction behavior together.
 
-Initial scalar mappings:
+Current scalar mappings:
 
 | Rust type | Discord option |
 | --- | --- |
@@ -253,10 +257,16 @@ Initial scalar mappings:
 | `UserId` | User |
 | `ChannelId` | Channel |
 | `RoleId` | Role |
-| attachment type/ID | Attachment |
+| `AttachmentId` | Attachment |
 | `Option<T>` | Optional form of `T` |
 
-Unsupported parameter types should fail at macro expansion with a diagnostic attached to the unsupported parameter span.
+Every option parameter carries `#[description = "..."]`. `String` parameters may also carry `#[min_length = ...]` / `#[max_length = ...]`; `i64` and `f64` parameters may carry `#[min = ...]` / `#[max = ...]`. Required options must precede `Option<T>` parameters.
+
+The macro validates supported types, option count, descriptions, ordering, constraint compatibility, and Discord-supported ranges. Framework-specific parameter attributes are consumed and removed before the original Rust function is emitted, so the original typed function remains callable.
+
+`CommandOptionDescriptor` is the registration-side representation. `CommandOptions` and the `CommandOption` trait are the runtime extraction side. Both are generated or invoked from the same parsed macro parameter list, which prevents registration metadata and extraction behavior from drifting into separately maintained schemas.
+
+Unsupported parameter types fail at macro expansion with a diagnostic attached to the unsupported parameter span. Missing or malformed submitted values fail through explicit runtime option-extraction errors.
 
 ## Subcommands
 
