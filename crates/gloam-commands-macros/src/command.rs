@@ -426,7 +426,10 @@ fn option_parameter(argument: &mut FnArg) -> Result<OptionParameter> {
     let autocomplete = attributes.autocomplete;
     let (kind, required) = option_type(&ty)?;
     if autocomplete.is_some()
-        && !matches!(kind, OptionKind::String | OptionKind::Integer | OptionKind::Number)
+        && !matches!(
+            kind,
+            OptionKind::String | OptionKind::Integer | OptionKind::Number
+        )
     {
         return Err(Error::new(
             ident.span(),
