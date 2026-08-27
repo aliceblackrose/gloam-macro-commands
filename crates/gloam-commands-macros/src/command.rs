@@ -5,7 +5,7 @@ use quote::{format_ident, quote};
 use regex::Regex;
 use syn::{
     Attribute, Error, Expr, ExprLit, ExprUnary, FnArg, GenericArgument, Ident, ItemFn, Lit, LitStr,
-    Meta, Pat, PathArguments, Result, ReturnType, Token, Type, UnOp,
+    Meta, Pat, Path, PathArguments, Result, ReturnType, Token, Type, UnOp,
     ext::IdentExt,
     parse::{Parse, ParseStream},
     parse2,
@@ -109,6 +109,7 @@ struct OptionParameter {
     description: LitStr,
     required: bool,
     choices: ChoiceSource,
+    autocomplete: Option<Path>,
     min: Option<NumericBound>,
     max: Option<NumericBound>,
     min_length: Option<u32>,
@@ -162,6 +163,7 @@ struct OptionAttributes {
     max: Option<Expr>,
     min_length: Option<Expr>,
     max_length: Option<Expr>,
+    autocomplete: Option<Path>,
     typed_choice: bool,
     inline_choices: Vec<InlineChoiceArgs>,
 }
@@ -208,6 +210,17 @@ pub(crate) fn expand(attribute: TokenStream, item: TokenStream) -> Result<TokenS
         .iter()
         .map(|option| &option.name)
         .collect::<Vec<_>>();
+    let autocomplete_handlers = options
+        .iter()
+        .filter_map(|option| {
+            let handler = option.autocomplete.as_ref()?;
+            let handler = autocomplete_adapter_path(handler);
+            let name = &option.name;
+            Some(quote! {
+                ::gloam_commands::AutocompleteHandlerDescriptor::new(#name, #handler)
+            })
+        })
+        .collect::<Vec<_>>();
 
     let handler_body = if options.is_empty() {
         quote! { ::std::boxed::Box::pin(#function_name(ctx)) }
@@ -225,6 +238,19 @@ pub(crate) fn expand(attribute: TokenStream, item: TokenStream) -> Result<TokenS
                 };
                 #function_name(ctx, #(#option_idents),*).await
             })
+        }
+    };
+    let command_factory = if autocomplete_handlers.is_empty() {
+        quote! {
+            ::gloam_commands::SlashCommand::new(&DESCRIPTOR, #handler_name)
+        }
+    } else {
+        quote! {
+            ::gloam_commands::SlashCommand::new_with_autocomplete(
+                &DESCRIPTOR,
+                #handler_name,
+                ::std::vec![#(#autocomplete_handlers),*],
+            )
         }
     };
 
@@ -245,7 +271,7 @@ pub(crate) fn expand(attribute: TokenStream, item: TokenStream) -> Result<TokenS
                 ::gloam_commands::CommandDescriptor::new(#command_name, #description)
                     .with_options(OPTIONS);
 
-            ::gloam_commands::SlashCommand::new(&DESCRIPTOR, #handler_name)
+            #command_factory
         }
     })
 }
@@ -360,6 +386,14 @@ fn option_parameter(argument: &mut FnArg) -> Result<OptionParameter> {
             "a typed `#[choice]` option cannot also declare inline choices",
         ));
     }
+    if attributes.autocomplete.is_some()
+        && (attributes.typed_choice || !attributes.inline_choices.is_empty())
+    {
+        return Err(Error::new(
+            ident.span(),
+            "autocomplete cannot be combined with static command choices",
+        ));
+    }
 
     if attributes.typed_choice {
         let required = validate_typed_choice_type(&ty)?;
@@ -381,6 +415,7 @@ fn option_parameter(argument: &mut FnArg) -> Result<OptionParameter> {
             description,
             required,
             choices: ChoiceSource::Typed,
+            autocomplete: None,
             min: None,
             max: None,
             min_length: None,
@@ -388,7 +423,16 @@ fn option_parameter(argument: &mut FnArg) -> Result<OptionParameter> {
         });
     }
 
+    let autocomplete = attributes.autocomplete;
     let (kind, required) = option_type(&ty)?;
+    if autocomplete.is_some()
+        && !matches!(kind, OptionKind::String | OptionKind::Integer | OptionKind::Number)
+    {
+        return Err(Error::new(
+            ident.span(),
+            "autocomplete is only supported for `String`, `i64`, and `f64` options",
+        ));
+    }
     let choices = parse_inline_choices(kind, attributes.inline_choices)?;
     let (min, max) = numeric_bounds(kind, attributes.min.as_ref(), attributes.max.as_ref())?;
     let (min_length, max_length) = string_bounds(
@@ -404,6 +448,7 @@ fn option_parameter(argument: &mut FnArg) -> Result<OptionParameter> {
         description,
         required,
         choices,
+        autocomplete,
         min,
         max,
         min_length,
@@ -450,6 +495,13 @@ fn take_option_attributes(attributes: &mut Vec<Attribute>) -> Result<OptionAttri
                 parse_expression_attribute(&attribute, "max_length")?,
                 &attribute,
                 "max_length",
+            )?;
+        } else if attribute.path().is_ident("autocomplete") {
+            set_once(
+                &mut parsed.autocomplete,
+                parse_path_attribute(&attribute, "autocomplete")?,
+                &attribute,
+                "autocomplete",
             )?;
         } else if attribute.path().is_ident("choice") {
             match &attribute.meta {
@@ -505,6 +557,30 @@ fn parse_string_attribute(attribute: &Attribute, name: &str) -> Result<LitStr> {
         ));
     };
     Ok(value)
+}
+
+fn parse_path_attribute(attribute: &Attribute, name: &str) -> Result<Path> {
+    let expression = parse_expression_attribute(attribute, name)?;
+    let Expr::Path(path) = expression else {
+        return Err(Error::new_spanned(
+            attribute,
+            format!("`#[{name} = ...]` requires a handler function path"),
+        ));
+    };
+    if path.qself.is_some()
+        || path.path.segments.is_empty()
+        || path
+            .path
+            .segments
+            .iter()
+            .any(|segment| !matches!(segment.arguments, PathArguments::None))
+    {
+        return Err(Error::new_spanned(
+            attribute,
+            format!("`#[{name} = ...]` requires a handler function path"),
+        ));
+    }
+    Ok(path.path)
 }
 
 fn parse_expression_attribute(attribute: &Attribute, name: &str) -> Result<Expr> {
@@ -980,7 +1056,21 @@ fn option_descriptor_tokens(option: &OptionParameter) -> TokenStream {
     if let Some(value) = option.max_length {
         descriptor = quote! { (#descriptor).max_length(#value) };
     }
+    if option.autocomplete.is_some() {
+        descriptor = quote! { (#descriptor).autocomplete() };
+    }
     descriptor
+}
+
+fn autocomplete_adapter_path(path: &Path) -> Path {
+    let mut adapter = path.clone();
+    let segment = adapter
+        .segments
+        .last_mut()
+        .expect("autocomplete handler paths are validated as non-empty");
+    let suffix = segment.ident.unraw().to_string();
+    segment.ident = format_ident!("__gloam_autocomplete_{suffix}", span = segment.ident.span());
+    adapter
 }
 
 fn inline_choice_tokens(choice: &InlineChoice) -> TokenStream {
