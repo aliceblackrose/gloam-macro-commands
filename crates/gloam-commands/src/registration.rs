@@ -149,7 +149,7 @@ fn create_scalar_option(descriptor: &CommandOptionDescriptor) -> ApplicationComm
         max_value: descriptor.max_value,
         min_length: descriptor.min_length,
         max_length: descriptor.max_length,
-        autocomplete: None,
+        autocomplete: descriptor.autocomplete.then_some(true),
         file_types: Vec::new(),
     }
 }
@@ -204,6 +204,7 @@ mod tests {
             ApplicationCommandOptionType::STRING,
             false,
         )
+        .autocomplete()
         .min_length(2)
         .max_length(100),
     ];
@@ -254,6 +255,7 @@ mod tests {
             count.choices[0].value,
             ApplicationCommandChoiceValue::Integer(1)
         );
+        assert_eq!(count.autocomplete, None);
         assert_eq!(
             count.min_value,
             Some(ApplicationCommandNumericValue::Integer(1))
@@ -266,6 +268,7 @@ mod tests {
         let query = &commands[1].options[1];
         assert_eq!(query.kind, ApplicationCommandOptionType::STRING);
         assert_eq!(query.required, Some(false));
+        assert_eq!(query.autocomplete, Some(true));
         assert_eq!(query.min_length, Some(2));
         assert_eq!(query.max_length, Some(100));
         Ok(())
