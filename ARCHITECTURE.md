@@ -53,7 +53,8 @@ The proc-macro crate must not perform Discord runtime behavior, own global state
 ```text
 Framework<D>
   ├── Arc<D>
-  └── CommandRegistry<D>
+  ├── CommandRegistry<D>
+  └── Arc<Semaphore>             # global command execution slots
 
 Runtime<D>
   ├── Arc<RestClient>
@@ -61,7 +62,9 @@ Runtime<D>
 
 Context<D>
   ├── Arc<Runtime<D>>
-  └── per-interaction command state
+  ├── Arc<Interaction>
+  ├── registered command name
+  └── optional ShardId
 ```
 
 `D` is application-owned shared state. The framework stores it behind `Arc` so command contexts can be owned values and can safely move into asynchronous handler tasks without requiring `D: Clone`.
@@ -109,54 +112,83 @@ This keeps command ordering and duplicate detection visible and testable. Linker
 
 ## Dispatch model
 
-Only Discord application-command interactions are command invocations.
+Only Discord chat-input application-command interactions are command invocations.
 
 ```text
-Gloamwire Gateway event
+Gloamwire GatewayEvent
         │
         ▼
 INTERACTION_CREATE
         │
-        ├── application command ──► command registry ──► handler
+        ├── chat-input application command ──► command registry ──► execution scheduler
         │
-        └── autocomplete ─────────► autocomplete registry/handler
+        ├── other application-command type ──► ignored
+        ├── autocomplete ─────────────────────► later autocomplete path
+        └── other interaction type ──────────► ignored
 ```
 
-Unrelated Gateway events pass through or are ignored by the managed framework path. The manual dispatch API will allow applications to keep owning their existing Gloamwire event loop.
+The framework reuses Gloamwire's `Interaction`, `GatewayEvent`, `ShardEvent`, and `ShardManager` types directly rather than creating parallel Discord models.
+
+Applications may choose either execution path:
+
+- `Framework::run(...)` owns the managed `ShardManager` event loop;
+- `Framework::dispatch(...)` and `Framework::dispatch_shard(...)` let an application keep ownership of its existing Gloamwire Gateway loop.
+
+Unrelated Gateway events are ignored by framework dispatch and remain available to applications that own the outer event loop.
 
 ## Concurrency model
 
-Gateway polling must not wait for command business logic. Once an interaction has been validated and resolved, handler execution is spawned separately and bounded by an explicit concurrency limit.
+Gateway polling must not wait for command business logic, and the framework must not create unbounded command tasks.
 
-The framework must not create unbounded command tasks.
+The execution slot is therefore reserved **before** a command task is spawned. Reservation is non-blocking. If no slot is available, no task is created.
 
 ```text
 Gateway polling
     │
     ├── resolve command
-    │      └── acquire execution permit
-    │             └── spawn handler
+    │      │
+    │      └── try reserve execution slot
+    │             ├── available ──► spawn handler holding permit
+    │             └── full ───────► AtCapacity; do not spawn
     │
     └── continue polling immediately
 ```
 
+`FrameworkBuilder::max_concurrent_commands(...)` controls the number of framework-owned handler tasks. The default is finite. A zero limit is rejected at build time.
+
+Manual dispatch surfaces saturation as `DispatchOutcome::AtCapacity`. The managed runtime also refuses to create a task when saturated and immediately continues Gateway polling. A later response-policy phase can decide how saturated interactions should be acknowledged to Discord without weakening this scheduler invariant.
+
+## Managed runtime
+
+`Framework::run(...)` creates a Gloamwire `RestClient`, starts Gloamwire's recommended shard set through `ShardManager`, and continuously consumes its unified `ShardEvent` stream.
+
+Slash-command dispatch requests `GatewayIntents::empty()` because Discord application-command interactions do not require Gateway intent subscriptions. Applications that also need guild/message/member event streams should own their Gloamwire loop and use manual framework dispatch with whatever intents their application requires.
+
+Shard identity is copied into `Context<D>` when dispatch originates from `ShardEvent`.
+
 ## Context design
 
-`Context<D>` is deliberately slash-command-specific. It should expose Discord interaction data and response helpers directly instead of pretending to represent multiple invocation mechanisms.
+`Context<D>` is deliberately slash-command-specific. It exposes the original Gloamwire `Interaction` rather than hiding Discord data behind a duplicate wrapper.
 
-Planned accessors include:
+Current accessors include:
 
 ```text
 ctx.data()
 ctx.rest()
+ctx.runtime()
 ctx.interaction()
+ctx.command_name()
+ctx.shard_id()
+```
+
+Planned accessors include:
+
+```text
 ctx.guild_id()
 ctx.channel_id()
 ctx.user()
 ctx.member()
-ctx.command_name()
 ctx.command_path()
-ctx.shard_id()
 ```
 
 Planned response helpers include:
@@ -226,22 +258,25 @@ It will not invent deeper application-only nesting that Discord cannot register.
 Framework errors should represent framework invariants such as:
 
 - duplicate command registration;
+- invalid concurrency configuration;
+- invalid interaction payloads;
 - invalid option extraction;
 - unknown command paths;
 - invalid interaction response transitions;
 - failed checks.
 
-Protocol/REST/Gateway errors should remain Gloamwire errors wrapped transparently rather than copied into parallel error models.
+Protocol/REST/Gateway errors remain Gloamwire errors wrapped transparently rather than copied into parallel error models.
 
 ## API design rules
 
 1. Prefer public Gloamwire types over wrapper types when no framework-specific invariant exists.
 2. Keep macro expansion thin; runtime logic belongs in `gloam-commands`.
 3. Keep user state explicit and shared through `Runtime<D>`/`Context<D>`.
-4. Do not require message-content intents for slash-command functionality.
+4. Do not require message-content or other Gateway intents for slash-command functionality.
 5. Keep registration deterministic and reject duplicate command paths early.
 6. Generate registration metadata and option extraction from the same source signature.
 7. Do not hide Discord acknowledgement state transitions.
 8. Keep managed execution optional; advanced applications must be able to dispatch interactions from their own Gateway loop.
 9. Do not duplicate Gloamwire REST, Gateway, sharding, or Discord model implementations.
-10. Prefix commands are a non-goal, not a deferred feature.
+10. Never block Gateway polling on command execution capacity and never create unbounded command waiter tasks.
+11. Prefix commands are a non-goal, not a deferred feature.
