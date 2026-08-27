@@ -2,12 +2,15 @@ use gloamwire::{
     RestClient,
     http::{BulkOverwriteApplicationCommand, CreateApplicationCommand},
     model::{
-        ApplicationCommand, ApplicationCommandOption, ApplicationCommandOptionType, ApplicationId,
-        GuildId,
+        ApplicationCommand, ApplicationCommandChoiceValue, ApplicationCommandOption,
+        ApplicationCommandOptionChoice, ApplicationCommandOptionType, ApplicationId, GuildId,
     },
 };
 
-use crate::{CommandOptionDescriptor, CommandRegistry, Result, SlashCommand};
+use crate::{
+    CommandChoiceDescriptor, CommandChoiceValue, CommandOptionDescriptor, CommandRegistry, Result,
+    SlashCommand,
+};
 
 /// Discord destination used when synchronizing the local slash-command registry.
 ///
@@ -139,7 +142,7 @@ fn create_scalar_option(descriptor: &CommandOptionDescriptor) -> ApplicationComm
         description: descriptor.description.to_owned(),
         description_localizations: None,
         required: Some(descriptor.required),
-        choices: Vec::new(),
+        choices: descriptor.choices.iter().map(create_choice).collect(),
         options: Vec::new(),
         channel_types: Vec::new(),
         min_value: descriptor.min_value,
@@ -151,16 +154,40 @@ fn create_scalar_option(descriptor: &CommandOptionDescriptor) -> ApplicationComm
     }
 }
 
+fn create_choice(descriptor: &CommandChoiceDescriptor) -> ApplicationCommandOptionChoice {
+    let value = match descriptor.value {
+        CommandChoiceValue::String(value) => {
+            ApplicationCommandChoiceValue::String(value.to_owned())
+        }
+        CommandChoiceValue::Integer(value) => ApplicationCommandChoiceValue::Integer(value),
+        CommandChoiceValue::Number(value) => ApplicationCommandChoiceValue::Number(value),
+    };
+
+    ApplicationCommandOptionChoice {
+        name: descriptor.name.to_owned(),
+        name_localizations: None,
+        value,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use gloamwire::model::{ApplicationCommandNumericValue, ApplicationCommandOptionType, GuildId};
+    use gloamwire::model::{
+        ApplicationCommandChoiceValue, ApplicationCommandNumericValue, ApplicationCommandOptionType,
+        GuildId,
+    };
 
     use crate::{
-        CommandDescriptor, CommandOptionDescriptor, CommandRegistry, Context, Result, SlashCommand,
+        CommandChoiceDescriptor, CommandDescriptor, CommandOptionDescriptor, CommandRegistry,
+        Context, Result, SlashCommand,
     };
 
     use super::{Registration, create_commands};
 
+    static COUNT_CHOICES: &[CommandChoiceDescriptor] = &[
+        CommandChoiceDescriptor::integer("One", 1),
+        CommandChoiceDescriptor::integer("Five", 5),
+    ];
     static QUERY_OPTIONS: &[CommandOptionDescriptor] = &[
         CommandOptionDescriptor::new(
             "count",
@@ -168,6 +195,7 @@ mod tests {
             ApplicationCommandOptionType::INTEGER,
             true,
         )
+        .with_choices(COUNT_CHOICES)
         .min_integer(1)
         .max_integer(25),
         CommandOptionDescriptor::new(
@@ -220,6 +248,12 @@ mod tests {
         let count = &commands[1].options[0];
         assert_eq!(count.kind, ApplicationCommandOptionType::INTEGER);
         assert_eq!(count.required, Some(true));
+        assert_eq!(count.choices.len(), 2);
+        assert_eq!(count.choices[0].name, "One");
+        assert_eq!(
+            count.choices[0].value,
+            ApplicationCommandChoiceValue::Integer(1)
+        );
         assert_eq!(
             count.min_value,
             Some(ApplicationCommandNumericValue::Integer(1))
