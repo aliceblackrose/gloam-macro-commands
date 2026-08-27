@@ -20,6 +20,19 @@ pub enum Error {
     #[error("application-command interaction is missing command data")]
     MissingApplicationCommandData,
 
+    /// A required slash-command option was not submitted.
+    #[error("missing required slash-command option `{0}`")]
+    MissingOption(&'static str),
+
+    /// A submitted slash-command option did not match its generated Rust type.
+    #[error("slash-command option `{name}` is not a valid `{expected}` value")]
+    InvalidOption {
+        /// Option name generated from the handler parameter.
+        name: &'static str,
+        /// Rust type expected by the generated handler adapter.
+        expected: &'static str,
+    },
+
     /// An operation required an acknowledgement, but the interaction is still pending.
     #[error("interaction has not been acknowledged")]
     InteractionNotAcknowledged,
