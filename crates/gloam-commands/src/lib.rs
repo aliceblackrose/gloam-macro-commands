@@ -17,14 +17,15 @@ mod response;
 mod runtime;
 
 pub use command::{
-    CommandDescriptor, CommandFuture, CommandHandler, CommandOptionDescriptor, SlashCommand,
+    CommandChoiceDescriptor, CommandChoiceValue, CommandDescriptor, CommandFuture, CommandHandler,
+    CommandOptionDescriptor, SlashCommand,
 };
 pub use context::Context;
 pub use dispatch::{CommandTask, DispatchOutcome};
 pub use error::{Error, Result};
 pub use framework::{DEFAULT_MAX_CONCURRENT_COMMANDS, Framework, FrameworkBuilder};
-pub use gloam_commands_macros::{command, commands, group};
-pub use options::{CommandOption, CommandOptions};
+pub use gloam_commands_macros::{CommandChoice, command, commands, group};
+pub use options::{CommandChoice, CommandOption, CommandOptions};
 pub use registration::Registration;
 pub use registry::CommandRegistry;
 pub use runtime::Runtime;
@@ -32,6 +33,7 @@ pub use runtime::Runtime;
 /// Common imports for applications using the framework.
 pub mod prelude {
     pub use crate::{
-        Context, DispatchOutcome, Framework, Registration, Result, command, commands, group,
+        CommandChoice, Context, DispatchOutcome, Framework, Registration, Result, command, commands,
+        group,
     };
 }
