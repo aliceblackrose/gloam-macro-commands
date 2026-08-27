@@ -2,7 +2,7 @@
 
 A focused Discord **slash-command framework** for [Gloamwire](https://github.com/cybellereaper/gloamwire), written for Rust 1.98 and Edition 2024.
 
-> **Current status:** Phase 5 — typed slash-command options.
+> **Current status:** Phase 6 — command synchronization.
 
 The framework is intentionally limited to Discord chat-input application commands. It does **not** implement prefix commands, message-content parsing, or a hybrid prefix/slash command abstraction.
 
@@ -31,10 +31,11 @@ The proc-macro crate contains no Discord runtime behavior. Generated code target
 
 ## Current API
 
-Typed slash commands can be declared with `#[command]`, respond through `Context<D>`, and execute through the managed Gloamwire shard runtime:
+Typed slash commands can be declared with `#[command]`, synchronized with Discord, respond through `Context<D>`, and execute through the managed Gloamwire shard runtime:
 
 ```rust,ignore
 use gloam_commands::prelude::*;
+use gloamwire::model::GuildId;
 
 struct State;
 
@@ -62,6 +63,7 @@ async fn hello(
 async fn main() -> Result<()> {
     let framework = Framework::builder(State)
         .commands(commands![hello])
+        .registration(Registration::Guild(GuildId::new(123456789012345678)))
         .max_concurrent_commands(64)
         .build()?;
 
@@ -70,6 +72,8 @@ async fn main() -> Result<()> {
         .await
 }
 ```
+
+Use guild registration while developing so command updates propagate quickly. Switch to `Registration::Global` when the command set should be published globally. `Registration::None` is the safe default and leaves Discord registration externally managed.
 
 ### Typed command options
 
@@ -98,6 +102,28 @@ The macro validates Discord's supported ranges, rejects incompatible constraints
 
 Dispatch parses application-command data once through Gloamwire. `Context<D>` retains that parsed data, and the generated adapter extracts each typed parameter before calling the user's async function. Missing required options and malformed option values surface as framework errors rather than being silently defaulted.
 
+### Command synchronization
+
+Registration is explicit because Discord bulk overwrite replaces the target command set. `FrameworkBuilder` therefore defaults to `Registration::None`; simply starting a framework never mutates Discord command registration unless a target is selected.
+
+Available policies are:
+
+- `Registration::Guild(guild_id)` — recommended during development because guild command changes propagate quickly;
+- `Registration::Global` — bulk-overwrites the application's global command set;
+- `Registration::None` — performs no registration HTTP requests and leaves command management external.
+
+The generated `CommandDescriptor` and `CommandOptionDescriptor` values are converted directly into Gloamwire's application-command request models. Name ordering stays deterministic because synchronization walks the framework's `BTreeMap`-backed registry, and option kinds, requiredness, numeric bounds, and string-length bounds come from the same generated metadata used by typed handlers.
+
+In managed mode, `Framework::run(...)` waits for the first Discord `READY` dispatch, reads the application ID from Gloamwire's typed `ReadyEvent`, and synchronizes once before continuing normal command handling. Applications that own their Gateway loop can synchronize explicitly:
+
+```rust,ignore
+framework
+    .synchronize_commands(&rest, application_id)
+    .await?;
+```
+
+Both global and guild synchronization reuse Gloamwire's existing bulk-overwrite REST methods. Gloamwire failures propagate through the framework's transparent Gloamwire error variant instead of being translated into a parallel HTTP error model.
+
 ### Interaction responses
 
 Each command context owns a shared acknowledgement state that is also shared by clones of that context. Response transitions are serialized so concurrent handlers cannot accidentally send two initial acknowledgements.
@@ -119,6 +145,7 @@ The managed runtime:
 
 - uses Gloamwire's recommended `ShardManager` configuration;
 - requests no Gateway intents because application-command interactions do not require one;
+- optionally synchronizes the registry once from the first typed `READY` event;
 - parses only `INTERACTION_CREATE` application-command payloads through Gloamwire's typed dispatch API;
 - routes only chat-input commands registered in the local command registry;
 - preserves the receiving `ShardId` in `Context<D>`;
@@ -138,21 +165,6 @@ Applications that already own a Gloamwire Gateway loop can call `Framework::disp
 - validates command names, descriptions, parameter descriptions, option ordering, option count, supported types, and supported constraints;
 - preserves the original Rust function;
 - generates the static descriptor and erased extraction/handler adapter used by `commands![...]`.
-
-Command synchronization is not implemented yet. Until Phase 6, Discord application commands must be registered externally for managed Gateway dispatch to receive invocations. Phase 6 will convert the generated descriptors into Gloamwire application-command payloads and bulk-synchronize them with Discord.
-
-## Planned synchronization API
-
-Phase 6 will extend framework configuration with explicit registration policy while reusing the descriptors already generated in Phase 5:
-
-```rust,ignore
-let framework = Framework::builder(State)
-    .commands(commands![hello])
-    .registration(Registration::Global)
-    .build()?;
-```
-
-Registration remains explicit and deterministic; the framework will use Gloamwire's existing application-command REST APIs rather than adding parallel HTTP behavior.
 
 ## Roadmap
 
