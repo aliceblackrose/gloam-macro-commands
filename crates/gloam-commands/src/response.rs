@@ -30,7 +30,7 @@ impl ResponseState {
             Self::Deferred {
                 ephemeral: deferred_ephemeral,
             } => {
-                if ephemeral && !deferred_ephemeral {
+                if ephemeral != deferred_ephemeral {
                     return Err(Error::ResponseVisibilityMismatch);
                 }
                 Ok(ReplyAction::CompleteDeferred)
@@ -48,17 +48,18 @@ impl<D> Context<D> {
     /// Sends a public interaction response.
     ///
     /// The first reply acknowledges a pending interaction. A reply after a
-    /// deferral edits the deferred original response, and later replies become
-    /// followup messages automatically.
+    /// public deferral edits the deferred original response, and later replies
+    /// become followup messages automatically.
     pub async fn reply(&self, content: impl Into<String>) -> Result<()> {
         self.reply_inner(content.into(), false).await
     }
 
     /// Sends an ephemeral interaction response.
     ///
-    /// After an interaction has already produced a response, this creates an
-    /// ephemeral followup. A public deferral cannot later be converted into an
-    /// ephemeral original response.
+    /// The first reply acknowledges a pending interaction. A reply after an
+    /// ephemeral deferral edits the deferred original response, and later
+    /// replies become ephemeral followup messages. Deferral visibility cannot
+    /// be changed while completing the original response.
     pub async fn reply_ephemeral(&self, content: impl Into<String>) -> Result<()> {
         self.reply_inner(content.into(), true).await
     }
@@ -206,20 +207,20 @@ impl<D> Context<D> {
     }
 
     async fn followup_inner(&self, content: String, ephemeral: bool) -> Result<Message> {
-        let state = self.response_state().lock().await;
-        if !state.is_acknowledged() {
+        let acknowledged = self.response_state().lock().await.is_acknowledged();
+        if !acknowledged {
             return Err(Error::InteractionNotAcknowledged);
         }
 
         let interaction = self.interaction();
-        self.rest()
+        Ok(self
+            .rest()
             .create_followup_message(
                 interaction.application_id,
                 &interaction.token,
                 &message_data(content, ephemeral),
             )
-            .await
-            .map_err(Into::into)
+            .await?)
     }
 }
 
@@ -253,6 +254,12 @@ mod tests {
             ReplyAction::CompleteDeferred
         );
         assert_eq!(
+            ResponseState::Deferred { ephemeral: true }
+                .reply_action(true)
+                .expect("ephemeral deferred"),
+            ReplyAction::CompleteDeferred
+        );
+        assert_eq!(
             ResponseState::Responded
                 .reply_action(true)
                 .expect("followup"),
@@ -267,17 +274,15 @@ mod tests {
     }
 
     #[test]
-    fn rejects_ephemeral_completion_of_public_deferral() {
+    fn rejects_visibility_changes_after_deferral() {
         assert!(matches!(
             ResponseState::Deferred { ephemeral: false }.reply_action(true),
             Err(Error::ResponseVisibilityMismatch)
         ));
-        assert_eq!(
-            ResponseState::Deferred { ephemeral: true }
-                .reply_action(true)
-                .expect("ephemeral deferred completion"),
-            ReplyAction::CompleteDeferred
-        );
+        assert!(matches!(
+            ResponseState::Deferred { ephemeral: true }.reply_action(false),
+            Err(Error::ResponseVisibilityMismatch)
+        ));
     }
 
     #[tokio::test]
