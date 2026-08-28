@@ -421,7 +421,7 @@ mod tests {
         };
 
         let public = MessagePayload::Embeds(vec![embed.clone()]).into_message_data(false);
-        assert_eq!(public.embeds, [embed.clone()]);
+        assert_eq!(public.embeds.as_slice(), std::slice::from_ref(&embed));
         assert_eq!(public.flags, None);
 
         let ephemeral = MessagePayload::Embeds(vec![embed]).into_message_data(true);
