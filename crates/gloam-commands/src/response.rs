@@ -234,8 +234,7 @@ impl<D> Context<D> {
         match state.reply_action(ephemeral)? {
             ReplyAction::Initial { ephemeral } => {
                 let interaction = self.interaction();
-                let response =
-                    InteractionResponse::message(payload.into_message_data(ephemeral));
+                let response = InteractionResponse::message(payload.into_message_data(ephemeral));
                 self.rest()
                     .create_interaction_response(
                         interaction.id,
