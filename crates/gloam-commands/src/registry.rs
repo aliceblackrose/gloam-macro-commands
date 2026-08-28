@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
 
 use gloamwire::model::ApplicationCommandOptionType;
 
@@ -22,11 +22,13 @@ impl<D> CommandRegistry<D> {
     pub fn insert(&mut self, command: SlashCommand<D>) -> Result<()> {
         validate_hierarchy(&command)?;
         let name = command.descriptor().name;
-        if self.commands.contains_key(name) {
-            return Err(Error::DuplicateCommand(name));
+        match self.commands.entry(name) {
+            Entry::Vacant(entry) => {
+                entry.insert(command);
+                Ok(())
+            }
+            Entry::Occupied(_) => Err(Error::DuplicateCommand(name)),
         }
-        self.commands.insert(name, command);
-        Ok(())
     }
 
     /// Resolves one top-level command by registered name.

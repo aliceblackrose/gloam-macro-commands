@@ -55,7 +55,7 @@ pub struct CommandPolicy<D> {
     member_permissions: Option<Permissions>,
     bot_permissions: Option<Permissions>,
     cooldown: Option<Duration>,
-    cooldowns: Arc<Mutex<HashMap<UserId, Instant>>>,
+    cooldowns: Mutex<HashMap<UserId, Instant>>,
     max_concurrency: Option<usize>,
     command_slots: Option<Arc<Semaphore>>,
 }
@@ -70,7 +70,7 @@ impl<D> CommandPolicy<D> {
             member_permissions: None,
             bot_permissions: None,
             cooldown: None,
-            cooldowns: Arc::new(Mutex::new(HashMap::new())),
+            cooldowns: Mutex::new(HashMap::new()),
             max_concurrency: None,
             command_slots: None,
         }
@@ -174,7 +174,6 @@ impl<D> CommandPolicy<D> {
     where
         D: Send + Sync + 'static,
     {
-        let path = context.command_path().join(" ");
         let interaction = context.interaction();
 
         if !self.contexts.is_empty()
@@ -182,7 +181,7 @@ impl<D> CommandPolicy<D> {
                 .context
                 .is_none_or(|current| !self.contexts.contains(&current))
         {
-            return Err(Error::CommandContextNotAllowed(path));
+            return Err(Error::CommandContextNotAllowed(command_path(context)));
         }
 
         if let Some(required) = self.member_permissions {
@@ -193,7 +192,7 @@ impl<D> CommandPolicy<D> {
                 .unwrap_or_else(Permissions::empty);
             if !actual.contains(required) {
                 return Err(Error::MissingMemberPermissions {
-                    path,
+                    path: command_path(context),
                     required,
                     actual,
                 });
@@ -206,7 +205,7 @@ impl<D> CommandPolicy<D> {
                 .unwrap_or_else(Permissions::empty);
             if !actual.contains(required) {
                 return Err(Error::MissingBotPermissions {
-                    path,
+                    path: command_path(context),
                     required,
                     actual,
                 });
@@ -216,25 +215,20 @@ impl<D> CommandPolicy<D> {
         for check in &self.checks {
             if !(check.handler)(context.clone()).await? {
                 return Err(Error::CommandCheckFailed {
-                    path,
+                    path: command_path(context),
                     check: check.name,
                 });
             }
         }
 
         if let Some(duration) = self.cooldown {
-            self.reserve_cooldown(context, duration, path).await?;
+            self.reserve_cooldown(context, duration).await?;
         }
 
         Ok(())
     }
 
-    async fn reserve_cooldown(
-        &self,
-        context: &Context<D>,
-        duration: Duration,
-        path: String,
-    ) -> Result<()> {
+    async fn reserve_cooldown(&self, context: &Context<D>, duration: Duration) -> Result<()> {
         let interaction = context.interaction();
         let user_id = interaction
             .user
@@ -247,25 +241,25 @@ impl<D> CommandPolicy<D> {
                     .and_then(|member| member.user.as_ref())
                     .map(|user| user.id)
             })
-            .ok_or_else(|| Error::CommandUserUnavailable(path.clone()))?;
+            .ok_or_else(|| Error::CommandUserUnavailable(command_path(context)))?;
 
         let now = Instant::now();
         let ready_at = now
             .checked_add(duration)
-            .ok_or_else(|| Error::InvalidCommandPolicy(path.clone()))?;
+            .ok_or_else(|| Error::InvalidCommandPolicy(command_path(context)))?;
         let mut cooldowns = self.cooldowns.lock().await;
-        cooldowns.retain(|_, deadline| *deadline > now);
 
         if let Some(deadline) = cooldowns.get(&user_id)
             && *deadline > now
         {
             return Err(Error::CommandOnCooldown {
-                path,
+                path: command_path(context),
                 retry_after: deadline.saturating_duration_since(now),
             });
         }
 
         cooldowns.insert(user_id, ready_at);
+        cooldowns.retain(|_, deadline| *deadline > now);
         Ok(())
     }
 }
@@ -274,4 +268,8 @@ impl<D> Default for CommandPolicy<D> {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn command_path<D>(context: &Context<D>) -> String {
+    context.command_path().join(" ")
 }
