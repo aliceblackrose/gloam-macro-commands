@@ -143,7 +143,9 @@ pub enum Error {
     InteractionNotAcknowledged,
 
     /// Discord may have applied a response mutation whose outcome is unknown.
-    #[error("interaction response state is uncertain; reconcile the original response before retrying")]
+    #[error(
+        "interaction response state is uncertain; reconcile the original response before retrying"
+    )]
     InteractionResponseStateUnknown,
 
     /// A second initial acknowledgement or deferral was attempted.

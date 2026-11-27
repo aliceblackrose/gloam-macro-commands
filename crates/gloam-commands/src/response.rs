@@ -80,12 +80,7 @@ impl ResponseState {
         std::mem::replace(self, Self::Unknown)
     }
 
-    fn finish<T>(
-        &mut self,
-        previous: Self,
-        next: Self,
-        result: gloamwire::Result<T>,
-    ) -> Result<T> {
+    fn finish<T>(&mut self, previous: Self, next: Self, result: gloamwire::Result<T>) -> Result<T> {
         match result {
             Ok(value) => {
                 *self = next;
