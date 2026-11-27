@@ -319,7 +319,7 @@ mod tests {
     };
 
     use super::{CommandOption, CommandOptions};
-    use crate::Error;
+    use crate::{CommandOptionDescriptor, Error};
 
     #[test]
     fn extracts_scalar_values() {
@@ -360,6 +360,39 @@ mod tests {
                 .expect("valid option");
         let options = CommandOptions::from_slice(std::slice::from_ref(&submitted));
         assert_eq!(f64::extract(&options, "ratio").expect("number"), 42.0);
+    }
+
+    #[test]
+    fn rejects_out_of_bounds_and_duplicate_submissions() {
+        let descriptor = CommandOptionDescriptor::new(
+            "count",
+            "Count",
+            ApplicationCommandOptionType::INTEGER,
+            true,
+        )
+        .max_integer(3);
+        let too_large = option(
+            "count",
+            ApplicationCommandOptionType::INTEGER,
+            ApplicationCommandInteractionValue::Integer(4),
+        );
+        assert!(matches!(
+            CommandOptions::from_slice(&[too_large]).validate(&[descriptor]),
+            Err(Error::InvalidOption { .. })
+        ));
+        let valid = option(
+            "count",
+            ApplicationCommandOptionType::INTEGER,
+            ApplicationCommandInteractionValue::Integer(3),
+        );
+        assert!(matches!(
+            CommandOptions::from_slice(&[valid.clone(), valid]).validate(&[descriptor]),
+            Err(Error::InvalidSubmittedOptions)
+        ));
+        assert!(matches!(
+            CommandOptions::from_slice(&[]).validate(&[descriptor]),
+            Err(Error::MissingOption("count"))
+        ));
     }
 
     #[test]

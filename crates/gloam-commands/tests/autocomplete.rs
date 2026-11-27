@@ -83,6 +83,56 @@ async fn empty_value(
     Ok(())
 }
 
+#[check]
+async fn normal_check(_ctx: Context<State>) -> Result<bool> {
+    Ok(true)
+}
+
+async fn deny_autocomplete(_ctx: AutocompleteContext<State>) -> Result<bool> {
+    Ok(false)
+}
+
+#[command(description = "Restricted search", check = normal_check)]
+async fn restricted(
+    _ctx: Context<State>,
+    #[description = "Search query"]
+    #[autocomplete = complete_empty_value]
+    query: String,
+) -> Result<()> {
+    let _ = query;
+    Ok(())
+}
+
+#[command(description = "Restricted search", autocomplete_check = deny_autocomplete)]
+async fn explicitly_denied(
+    _ctx: Context<State>,
+    #[description = "Search query"]
+    #[autocomplete = complete_empty_value]
+    query: String,
+) -> Result<()> {
+    let _ = query;
+    Ok(())
+}
+
+#[tokio::test]
+async fn autocomplete_denies_missing_or_failed_authorization() -> Result<()> {
+    let framework = Framework::builder(State::new())
+        .commands(commands![restricted, explicitly_denied])
+        .build()?;
+    let rest = RestClient::new("test-token")?;
+    for name in ["restricted", "explicitly_denied"] {
+        let event = top_level_autocomplete_event(name);
+        let DispatchOutcome::Spawned(task) = framework.dispatch(&rest, &event)? else {
+            panic!("expected autocomplete task");
+        };
+        assert!(matches!(
+            task.join().await,
+            Err(Error::AutocompleteAuthorizationRequired(path)) if path == name
+        ));
+    }
+    Ok(())
+}
+
 #[tokio::test]
 async fn macro_autocomplete_routes_nested_focus_before_response_validation() -> Result<()> {
     let framework = Framework::builder(State::new())

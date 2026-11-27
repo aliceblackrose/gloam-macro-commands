@@ -8,9 +8,9 @@ use gloamwire::{
     http::CreateInteractionResponseQuery,
     model::{
         ApplicationCommandChoiceValue, ApplicationCommandInteractionData,
-        ApplicationCommandInteractionDataOption,
-        ApplicationCommandOptionChoice, ApplicationCommandOptionType, ApplicationCommandType,
-        ApplicationId, AutocompleteInteractionCallbackData, Interaction, InteractionCallbackData,
+        ApplicationCommandInteractionDataOption, ApplicationCommandOptionChoice,
+        ApplicationCommandOptionType, ApplicationCommandType, ApplicationId,
+        AutocompleteInteractionCallbackData, Interaction, InteractionCallbackData,
         InteractionCallbackType, InteractionResponse, InteractionType,
     },
 };
@@ -23,9 +23,8 @@ use tokio::{
 
 use crate::{
     AutocompleteChoice, AutocompleteChoiceValue, AutocompleteContext, AutocompleteHandler,
-    CommandErrorHandler, CommandHandler, CommandHook, CommandPolicy,
-    CommandRegistry, CommandTask, Context, DispatchOutcome, Error, Registration, Result, Runtime,
-    SlashCommand, observability,
+    CommandErrorHandler, CommandHandler, CommandHook, CommandPolicy, CommandRegistry, CommandTask,
+    Context, DispatchOutcome, Error, Registration, Result, Runtime, SlashCommand, observability,
 };
 
 /// Default upper bound for simultaneously executing command handlers.
@@ -1357,6 +1356,29 @@ mod tests {
         second.join().await?;
 
         assert_eq!(framework.data().max_active.load(Ordering::SeqCst), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn timeout_releases_execution_permits() -> Result<()> {
+        use std::time::Duration;
+
+        fn stalled(_ctx: Context<()>) -> crate::CommandFuture {
+            Box::pin(std::future::pending())
+        }
+
+        let framework = Framework::builder(())
+            .command(SlashCommand::new(&SLOW, stalled))
+            .command(SlashCommand::new(&PING, handler))
+            .max_concurrent_commands(1)
+            .command_timeout(Duration::from_millis(20))
+            .build()?;
+        let rest = RestClient::new("test-token")?;
+        let first = spawned(framework.dispatch(&rest, &interaction_event("slow"))?);
+        assert!(matches!(first.join().await, Err(Error::ExecutionTimeout)));
+        spawned(framework.dispatch(&rest, &interaction_event("ping"))?)
+            .join()
+            .await?;
         Ok(())
     }
 

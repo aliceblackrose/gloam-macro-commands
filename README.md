@@ -289,7 +289,7 @@ let framework = Framework::builder(State)
 
 Normal command lifecycle order is deterministic: execution policy, before hooks in registration order, the generated command handler, after hooks in registration order, then centralized error handling when an execution step failed. A policy or before-hook failure prevents the user handler from starting and therefore skips after hooks. Once the user handler starts, all after hooks are allowed to run even if the handler or an earlier after hook fails; the first execution error is retained.
 
-A centralized error handler receives ownership of that first error. Returning `Ok(())` marks it handled for the spawned `CommandTask`; returning an error propagates that error from `CommandTask::join()`. Without a configured handler, normal execution errors continue to propagate from the command task. Autocomplete stays on its separate callback path and does not run normal command hooks or policy.
+A centralized error handler receives ownership of that first error. Returning `Ok(())` marks it handled for the spawned `CommandTask`; returning an error propagates that error from `CommandTask::join()`. Without a configured handler, normal execution errors continue to propagate from the command task. Autocomplete stays on its separate callback path and does not run normal command hooks or consume cooldowns. It inherits context and permission restrictions; commands with custom checks require an explicit autocomplete-specific authorization check. See [secure runtime migration](docs/secure-runtime.md).
 
 The optional `tracing` feature enables framework lifecycle events and Gloamwire's matching tracing feature without installing or configuring a subscriber. Built-in lifecycle tracing exposes only the resolved static command path; it does not log interaction tokens, raw Gateway payloads, submitted option values, autocomplete partial values, response bodies, application state, or formatted command errors. See [docs/observability.md](docs/observability.md) for the lifecycle and redaction contract.
 
@@ -474,3 +474,6 @@ Gloam Macro Commands will not provide:
 ## License
 
 MIT
+### Secure runtime defaults
+
+The runtime uses configurable command and autocomplete execution timeouts, validates submitted options before handler execution, and suppresses automatic mentions in response helpers. See [secure runtime migration](docs/secure-runtime.md) for the new defaults and explicit opt-ins.

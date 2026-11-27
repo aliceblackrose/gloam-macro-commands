@@ -1,8 +1,8 @@
 use gloamwire::{
     http::{CreateInteractionResponseQuery, EditInteractionMessageQuery, EditWebhookMessage},
     model::{
-        AllowedMentions, Embed, InteractionCallbackData, InteractionCallbackType, InteractionMessageData,
-        InteractionResponse, Message, MessageFlags,
+        AllowedMentions, Embed, InteractionCallbackData, InteractionCallbackType,
+        InteractionMessageData, InteractionResponse, Message, MessageFlags,
     },
 };
 
@@ -550,7 +550,13 @@ mod tests {
     fn ephemeral_message_data_sets_only_requested_visibility_flag() {
         let public = MessagePayload::Content("public".to_owned()).into_message_data(false);
         assert_eq!(public.flags, None);
-        assert!(public.allowed_mentions.expect("safe mentions").parse.is_empty());
+        assert!(
+            public
+                .allowed_mentions
+                .expect("safe mentions")
+                .parse
+                .is_empty()
+        );
 
         let ephemeral = MessagePayload::Content("private".to_owned()).into_message_data(true);
         assert_eq!(ephemeral.flags, Some(MessageFlags::EPHEMERAL));

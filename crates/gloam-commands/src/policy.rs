@@ -226,7 +226,10 @@ impl<D> CommandPolicy<D> {
         Ok(())
     }
 
-    pub(crate) async fn authorize_autocomplete(&self, context: &AutocompleteContext<D>) -> Result<()>
+    pub(crate) async fn authorize_autocomplete(
+        &self,
+        context: &AutocompleteContext<D>,
+    ) -> Result<()>
     where
         D: Send + Sync + 'static,
     {
