@@ -1,8 +1,8 @@
 use gloamwire::{
     http::{CreateInteractionResponseQuery, EditInteractionMessageQuery, EditWebhookMessage},
     model::{
-        Embed, InteractionCallbackData, InteractionCallbackType, InteractionMessageData,
-        InteractionResponse, Message, MessageFlags,
+        AllowedMentions, Embed, InteractionCallbackData, InteractionCallbackType,
+        InteractionMessageData, InteractionResponse, Message, MessageFlags,
     },
 };
 
@@ -27,6 +27,7 @@ enum ReplyAction {
 #[derive(Debug)]
 enum MessagePayload {
     Content(String),
+    ContentWithMentions(String, AllowedMentions),
     Embeds(Vec<Embed>),
 }
 
@@ -34,11 +35,18 @@ impl MessagePayload {
     fn into_message_data(self, ephemeral: bool) -> InteractionMessageData {
         let mut data = match self {
             Self::Content(content) => InteractionMessageData::content(content),
+            Self::ContentWithMentions(content, mentions) => InteractionMessageData {
+                allowed_mentions: Some(mentions),
+                ..InteractionMessageData::content(content)
+            },
             Self::Embeds(embeds) => InteractionMessageData {
                 embeds,
                 ..Default::default()
             },
         };
+        if data.allowed_mentions.is_none() {
+            data.allowed_mentions = Some(AllowedMentions::default());
+        }
         if ephemeral {
             data.flags = Some(MessageFlags::EPHEMERAL);
         }
@@ -49,10 +57,17 @@ impl MessagePayload {
         match self {
             Self::Content(content) => EditWebhookMessage {
                 content: Some(Some(content)),
+                allowed_mentions: Some(Some(AllowedMentions::default())),
+                ..Default::default()
+            },
+            Self::ContentWithMentions(content, mentions) => EditWebhookMessage {
+                content: Some(Some(content)),
+                allowed_mentions: Some(Some(mentions)),
                 ..Default::default()
             },
             Self::Embeds(embeds) => EditWebhookMessage {
                 embeds: Some(Some(embeds)),
+                allowed_mentions: Some(Some(AllowedMentions::default())),
                 ..Default::default()
             },
         }
@@ -147,6 +162,21 @@ impl<D> Context<D> {
     pub async fn reply(&self, content: impl Into<String>) -> Result<()> {
         self.reply_inner(MessagePayload::Content(content.into()), false)
             .await
+    }
+
+    /// Sends a reply with explicitly permitted mentions. Other reply helpers
+    /// suppress all mentions by default to protect user-controlled content.
+    pub async fn reply_with_mentions(
+        &self,
+        content: impl Into<String>,
+        mentions: AllowedMentions,
+        ephemeral: bool,
+    ) -> Result<()> {
+        self.reply_inner(
+            MessagePayload::ContentWithMentions(content.into(), mentions),
+            ephemeral,
+        )
+        .await
     }
 
     /// Sends a public interaction response containing one embed.
@@ -520,6 +550,13 @@ mod tests {
     fn ephemeral_message_data_sets_only_requested_visibility_flag() {
         let public = MessagePayload::Content("public".to_owned()).into_message_data(false);
         assert_eq!(public.flags, None);
+        assert!(
+            public
+                .allowed_mentions
+                .expect("safe mentions")
+                .parse
+                .is_empty()
+        );
 
         let ephemeral = MessagePayload::Content("private".to_owned()).into_message_data(true);
         assert_eq!(ephemeral.flags, Some(MessageFlags::EPHEMERAL));

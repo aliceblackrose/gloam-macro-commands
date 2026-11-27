@@ -415,3 +415,7 @@ Protocol/REST/Gateway errors, including command synchronization and autocomplete
 9. Do not duplicate Gloamwire REST, Gateway, sharding, interaction, or Discord model implementations.
 10. Never block Gateway polling on command/autocomplete execution capacity and never create unbounded waiter tasks.
 11. Prefix commands are a non-goal, not a deferred feature.
+
+## Secure runtime revision
+
+The context wrappers now each own one shared Arc containing the runtime, interaction, parsed command data and fixed-length command path; normal command contexts also embed the response-state mutex. The ownership diagrams above describe the earlier layout. See [secure runtime migration](docs/secure-runtime.md) for execution deadlines, authorization and validation changes.

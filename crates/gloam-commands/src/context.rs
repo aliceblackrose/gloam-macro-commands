@@ -13,69 +13,75 @@ use crate::{CommandOptions, Runtime, response::ResponseState};
 
 /// Per-execution context passed to slash-command handlers.
 pub struct Context<D> {
-    runtime: Arc<Runtime<D>>,
-    interaction: Arc<Interaction>,
-    command_data: Arc<ApplicationCommandInteractionData>,
-    command_path: Arc<[&'static str]>,
-    option_depth: usize,
+    inner: Arc<ContextInner<D>>,
     shard_id: Option<ShardId>,
-    response_state: Arc<Mutex<ResponseState>>,
+}
+
+struct ContextInner<D> {
+    runtime: Runtime<D>,
+    interaction: Interaction,
+    command_data: ApplicationCommandInteractionData,
+    command_path: [&'static str; 3],
+    option_depth: usize,
+    response_state: Mutex<ResponseState>,
 }
 
 impl<D> Context<D> {
     pub(crate) fn new(
-        runtime: Arc<Runtime<D>>,
-        interaction: Arc<Interaction>,
-        command_data: Arc<ApplicationCommandInteractionData>,
-        command_path: Vec<&'static str>,
+        runtime: Runtime<D>,
+        interaction: Interaction,
+        command_data: ApplicationCommandInteractionData,
+        command_path: [&'static str; 3],
         option_depth: usize,
         shard_id: Option<ShardId>,
     ) -> Self {
         Self {
-            runtime,
-            interaction,
-            command_data,
-            command_path: command_path.into(),
-            option_depth,
+            inner: Arc::new(ContextInner {
+                runtime,
+                interaction,
+                command_data,
+                command_path,
+                option_depth,
+                response_state: Mutex::new(ResponseState::Pending),
+            }),
             shard_id,
-            response_state: Arc::new(Mutex::new(ResponseState::Pending)),
         }
     }
 
     /// Returns the shared command runtime.
     #[must_use]
     pub fn runtime(&self) -> &Runtime<D> {
-        &self.runtime
+        &self.inner.runtime
     }
 
     /// Returns the Gloamwire REST client.
     #[must_use]
     pub fn rest(&self) -> &RestClient {
-        self.runtime.rest()
+        self.inner.runtime.rest()
     }
 
     /// Returns the application state.
     #[must_use]
     pub fn data(&self) -> &D {
-        self.runtime.data()
+        self.inner.runtime.data()
     }
 
     /// Returns the Discord interaction that invoked this command.
     #[must_use]
     pub fn interaction(&self) -> &Interaction {
-        &self.interaction
+        &self.inner.interaction
     }
 
     /// Returns parsed top-level application-command data for this invocation.
     #[must_use]
     pub fn command_data(&self) -> &ApplicationCommandInteractionData {
-        &self.command_data
+        &self.inner.command_data
     }
 
     /// Returns the resolved command path from top-level command to leaf handler.
     #[must_use]
     pub fn command_path(&self) -> &[&'static str] {
-        &self.command_path
+        &self.inner.command_path[..=self.inner.option_depth]
     }
 
     /// Returns typed extraction access to the resolved leaf option scope.
@@ -85,13 +91,13 @@ impl<D> Context<D> {
     }
 
     fn leaf_options(&self) -> &[ApplicationCommandInteractionDataOption] {
-        crate::options::leaf_options(&self.command_data, self.option_depth)
+        crate::options::leaf_options(&self.inner.command_data, self.inner.option_depth)
     }
 
     /// Returns the registered top-level slash-command name being executed.
     #[must_use]
     pub fn command_name(&self) -> &'static str {
-        self.command_path[0]
+        self.inner.command_path[0]
     }
 
     /// Returns the Gateway shard that received the interaction when known.
@@ -101,20 +107,15 @@ impl<D> Context<D> {
     }
 
     pub(crate) fn response_state(&self) -> &Mutex<ResponseState> {
-        &self.response_state
+        &self.inner.response_state
     }
 }
 
 impl<D> Clone for Context<D> {
     fn clone(&self) -> Self {
         Self {
-            runtime: Arc::clone(&self.runtime),
-            interaction: Arc::clone(&self.interaction),
-            command_data: Arc::clone(&self.command_data),
-            command_path: Arc::clone(&self.command_path),
-            option_depth: self.option_depth,
+            inner: Arc::clone(&self.inner),
             shard_id: self.shard_id,
-            response_state: Arc::clone(&self.response_state),
         }
     }
 }

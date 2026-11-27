@@ -35,7 +35,7 @@ pub use framework::{DEFAULT_MAX_CONCURRENT_COMMANDS, Framework, FrameworkBuilder
 pub use gloam_commands_macros::{CommandChoice, autocomplete, check, command, commands, group};
 pub use lifecycle::{CommandErrorHandler, CommandHook};
 pub use options::{CommandChoice, CommandOption, CommandOptions};
-pub use policy::{CheckDescriptor, CheckFuture, CheckHandler, CommandPolicy};
+pub use policy::{AutocompleteCheck, CheckDescriptor, CheckFuture, CheckHandler, CommandPolicy};
 pub use registration::Registration;
 pub use registry::CommandRegistry;
 pub use runtime::Runtime;

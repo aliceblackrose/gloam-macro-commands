@@ -44,6 +44,18 @@ pub enum Error {
         option: String,
     },
 
+    /// Autocomplete could not satisfy its authorization policy.
+    #[error("autocomplete authorization denied for `{0}`")]
+    AutocompleteAuthorizationRequired(String),
+
+    /// A command or autocomplete task exceeded its execution deadline.
+    #[error("interaction execution deadline exceeded")]
+    ExecutionTimeout,
+
+    /// An invalid zero execution timeout was configured.
+    #[error("execution timeouts must be greater than zero")]
+    InvalidExecutionTimeout,
+
     /// An autocomplete handler returned choices Discord cannot accept.
     #[error("invalid autocomplete response: {0}")]
     InvalidAutocompleteResponse(String),
@@ -117,6 +129,10 @@ pub enum Error {
     /// An application-command interaction did not include command data.
     #[error("application-command interaction is missing command data")]
     MissingApplicationCommandData,
+
+    /// Submitted options contain unknown names, duplicates, or an invalid shape.
+    #[error("invalid submitted slash-command option structure")]
+    InvalidSubmittedOptions,
 
     /// A required slash-command option was not submitted.
     #[error("missing required slash-command option `{0}`")]

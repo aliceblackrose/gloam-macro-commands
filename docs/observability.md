@@ -14,7 +14,7 @@ Normal command execution uses one deterministic pipeline:
 
 A failing policy or before hook prevents the user handler from starting, so after hooks do not run in that case. Once the user handler starts, every registered after hook is given an opportunity to run, including when the handler returns an error. If multiple execution steps fail, the first error is preserved.
 
-Autocomplete interactions intentionally use their existing independent execution and response path; normal command hooks and policy do not run for autocomplete.
+Autocomplete uses an independent execution and response path. It enforces context and permission restrictions plus explicit autocomplete authorization checks; normal command hooks and cooldowns do not run.
 
 ## Hook signatures
 

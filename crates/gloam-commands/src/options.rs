@@ -1,10 +1,10 @@
 use gloamwire::model::{
     ApplicationCommandInteractionData, ApplicationCommandInteractionDataOption,
-    ApplicationCommandInteractionValue, ApplicationCommandOptionType, AttachmentId, ChannelId,
-    RoleId, UserId,
+    ApplicationCommandInteractionValue, ApplicationCommandNumericValue,
+    ApplicationCommandOptionType, AttachmentId, ChannelId, RoleId, UserId,
 };
 
-use crate::{CommandChoiceDescriptor, Error, Result};
+use crate::{CommandChoiceDescriptor, CommandChoiceValue, CommandOptionDescriptor, Error, Result};
 
 /// Submitted scalar options for one resolved Discord chat-input command path.
 ///
@@ -32,6 +32,115 @@ impl<'a> CommandOptions<'a> {
     pub fn get(&self, name: &str) -> Option<&'a ApplicationCommandInteractionDataOption> {
         self.options.iter().find(|option| option.name == name)
     }
+
+    pub(crate) fn validate(&self, descriptors: &[CommandOptionDescriptor]) -> Result<()> {
+        // Discord allows at most 25 options, so a bitset avoids a temporary map.
+        let mut seen = 0u32;
+        for option in self.options {
+            let Some(index) = descriptors.iter().position(|d| d.name == option.name) else {
+                return Err(Error::InvalidSubmittedOptions);
+            };
+            let descriptor = &descriptors[index];
+            let bit = 1 << index;
+            if seen & bit != 0
+                || option.kind != descriptor.kind
+                || !option.options.is_empty()
+                || option.focused == Some(true)
+            {
+                return Err(Error::InvalidSubmittedOptions);
+            }
+            seen |= bit;
+            validate_value(option, descriptor)?;
+        }
+        for (index, descriptor) in descriptors.iter().enumerate() {
+            if descriptor.required && seen & (1 << index) == 0 {
+                return Err(Error::MissingOption(descriptor.name));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn numeric_bound(bound: ApplicationCommandNumericValue) -> f64 {
+    match bound {
+        ApplicationCommandNumericValue::Integer(value) => value as f64,
+        ApplicationCommandNumericValue::Number(value) => value,
+    }
+}
+
+fn validate_value(
+    option: &ApplicationCommandInteractionDataOption,
+    descriptor: &CommandOptionDescriptor,
+) -> Result<()> {
+    use ApplicationCommandInteractionValue as Value;
+    use ApplicationCommandOptionType as Kind;
+    let invalid = || invalid_option(descriptor.name, "registered option");
+    let value = option.value.as_ref().ok_or_else(invalid)?;
+    let number = match (descriptor.kind, value) {
+        (Kind::STRING, Value::String(value)) => {
+            let length = value.chars().count();
+            if length > 6000
+                || descriptor
+                    .min_length
+                    .is_some_and(|min| length < min as usize)
+                || descriptor
+                    .max_length
+                    .is_some_and(|max| length > max as usize)
+            {
+                return Err(invalid());
+            }
+            None
+        }
+        (Kind::BOOLEAN, Value::Boolean(_)) => None,
+        (Kind::INTEGER, Value::Integer(value))
+            if (-9_007_199_254_740_991..=9_007_199_254_740_991).contains(value) =>
+        {
+            Some(*value as f64)
+        }
+        (Kind::NUMBER, Value::Integer(value))
+            if (-9_007_199_254_740_992..=9_007_199_254_740_992).contains(value) =>
+        {
+            Some(*value as f64)
+        }
+        (Kind::NUMBER, Value::Number(value))
+            if (-9_007_199_254_740_992.0..=9_007_199_254_740_992.0).contains(value) =>
+        {
+            Some(*value)
+        }
+        (
+            Kind::USER | Kind::ROLE | Kind::CHANNEL | Kind::ATTACHMENT | Kind::MENTIONABLE,
+            Value::String(value),
+        ) if value.parse::<u64>().is_ok_and(|id| id != 0) => None,
+        _ => return Err(invalid()),
+    };
+    if let Some(number) = number
+        && (descriptor
+            .min_value
+            .is_some_and(|min| number < numeric_bound(min))
+            || descriptor
+                .max_value
+                .is_some_and(|max| number > numeric_bound(max)))
+    {
+        return Err(invalid());
+    }
+    if !descriptor.choices.is_empty()
+        && !descriptor
+            .choices
+            .iter()
+            .any(|choice| match (choice.value, value) {
+                (CommandChoiceValue::String(expected), Value::String(actual)) => expected == actual,
+                (CommandChoiceValue::Integer(expected), Value::Integer(actual)) => {
+                    expected == *actual
+                }
+                (CommandChoiceValue::Number(expected), _) => number == Some(expected),
+                _ => false,
+            })
+    {
+        return Err(Error::InvalidChoice {
+            name: descriptor.name,
+        });
+    }
+    Ok(())
 }
 
 /// Rust type that can be extracted from a Discord chat-input command option.
@@ -95,12 +204,27 @@ impl_copy_option!(
     ApplicationCommandInteractionValue::Integer,
     "i64"
 );
-impl_copy_option!(
-    f64,
-    ApplicationCommandOptionType::NUMBER,
-    ApplicationCommandInteractionValue::Number,
-    "f64"
-);
+impl CommandOption for f64 {
+    const KIND: ApplicationCommandOptionType = ApplicationCommandOptionType::NUMBER;
+
+    fn extract(options: &CommandOptions<'_>, name: &'static str) -> Result<Self> {
+        let option = required_option(options, name)?;
+        validate_kind(option, name, Self::KIND, "f64")?;
+        let value = match option.value.as_ref() {
+            Some(ApplicationCommandInteractionValue::Number(value)) => *value,
+            Some(ApplicationCommandInteractionValue::Integer(value))
+                if (-9_007_199_254_740_992..=9_007_199_254_740_992).contains(value) =>
+            {
+                *value as f64
+            }
+            _ => return Err(invalid_option(name, "f64")),
+        };
+        if !(-9_007_199_254_740_992.0..=9_007_199_254_740_992.0).contains(&value) {
+            return Err(invalid_option(name, "f64"));
+        }
+        Ok(value)
+    }
+}
 
 macro_rules! impl_id_option {
     ($type:ty, $kind:path, $expected:literal) => {
@@ -211,7 +335,7 @@ mod tests {
     };
 
     use super::{CommandOption, CommandOptions};
-    use crate::Error;
+    use crate::{CommandOptionDescriptor, Error};
 
     #[test]
     fn extracts_scalar_values() {
@@ -243,6 +367,48 @@ mod tests {
         assert!(bool::extract(&options, "enabled").expect("bool"));
         assert_eq!(i64::extract(&options, "count").expect("integer"), 42);
         assert_eq!(f64::extract(&options, "ratio").expect("number"), 1.5);
+    }
+
+    #[test]
+    fn extracts_integer_encoded_number_from_json() {
+        let submitted: ApplicationCommandInteractionDataOption =
+            serde_json::from_value(serde_json::json!({"name": "ratio", "type": 10, "value": 42}))
+                .expect("valid option");
+        let options = CommandOptions::from_slice(std::slice::from_ref(&submitted));
+        assert_eq!(f64::extract(&options, "ratio").expect("number"), 42.0);
+    }
+
+    #[test]
+    fn rejects_out_of_bounds_and_duplicate_submissions() {
+        let descriptor = CommandOptionDescriptor::new(
+            "count",
+            "Count",
+            ApplicationCommandOptionType::INTEGER,
+            true,
+        )
+        .max_integer(3);
+        let too_large = option(
+            "count",
+            ApplicationCommandOptionType::INTEGER,
+            ApplicationCommandInteractionValue::Integer(4),
+        );
+        assert!(matches!(
+            CommandOptions::from_slice(&[too_large]).validate(&[descriptor]),
+            Err(Error::InvalidOption { .. })
+        ));
+        let valid = option(
+            "count",
+            ApplicationCommandOptionType::INTEGER,
+            ApplicationCommandInteractionValue::Integer(3),
+        );
+        assert!(matches!(
+            CommandOptions::from_slice(&[valid.clone(), valid]).validate(&[descriptor]),
+            Err(Error::InvalidSubmittedOptions)
+        ));
+        assert!(matches!(
+            CommandOptions::from_slice(&[]).validate(&[descriptor]),
+            Err(Error::MissingOption("count"))
+        ));
     }
 
     #[test]

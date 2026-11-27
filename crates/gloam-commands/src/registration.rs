@@ -34,6 +34,9 @@ impl Registration {
         application_id: ApplicationId,
         registry: &CommandRegistry<D>,
     ) -> Result<Vec<ApplicationCommand>> {
+        if self == Self::None {
+            return Ok(Vec::new());
+        }
         let commands = create_commands(registry);
 
         match self {
