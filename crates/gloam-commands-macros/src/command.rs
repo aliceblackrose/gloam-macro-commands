@@ -345,7 +345,10 @@ pub(crate) fn expand(attribute: TokenStream, item: TokenStream) -> Result<TokenS
         .iter()
         .enumerate()
         .map(|(index, _)| {
-            format_ident!("__gloam_option_{index}", span = proc_macro2::Span::mixed_site())
+            format_ident!(
+                "__gloam_option_{index}",
+                span = proc_macro2::Span::mixed_site()
+            )
         })
         .collect::<Vec<_>>();
     let option_types = options.iter().map(|option| &option.ty).collect::<Vec<_>>();

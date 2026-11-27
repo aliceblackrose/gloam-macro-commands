@@ -126,8 +126,8 @@ impl<D> CommandPolicy<D> {
     #[must_use]
     pub fn max_concurrency(mut self, limit: usize) -> Self {
         self.max_concurrency = Some(limit);
-        self.command_slots = (limit > 0 && limit <= Semaphore::MAX_PERMITS)
-            .then(|| Arc::new(Semaphore::new(limit)));
+        self.command_slots =
+            (limit > 0 && limit <= Semaphore::MAX_PERMITS).then(|| Arc::new(Semaphore::new(limit)));
         self
     }
 

@@ -320,3 +320,16 @@ mod tests {
         }
     }
 }
+
+// Dispatch has already validated that every traversed group contains exactly
+// one submitted branch. Reuse the original immutable interaction allocation.
+pub(crate) fn leaf_options(
+    data: &ApplicationCommandInteractionData,
+    depth: usize,
+) -> &[ApplicationCommandInteractionDataOption] {
+    let mut options = data.options.as_slice();
+    for _ in 0..depth {
+        options = &options[0].options;
+    }
+    options
+}

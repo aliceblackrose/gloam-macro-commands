@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use gloamwire::{
     RestClient,
@@ -9,7 +9,7 @@ use gloamwire::{
     model::{
         ApplicationCommandChoiceValue, ApplicationCommandInteractionDataOption,
         ApplicationCommandOptionChoice, ApplicationCommandOptionType, ApplicationCommandType,
-        ApplicationId, AutocompleteInteractionCallbackData, InteractionCallbackData,
+        ApplicationId, AutocompleteInteractionCallbackData, Interaction, InteractionCallbackData,
         InteractionCallbackType, InteractionResponse, InteractionType,
     },
 };
@@ -28,6 +28,9 @@ use crate::{
 
 /// Default upper bound for simultaneously executing command handlers.
 pub const DEFAULT_MAX_CONCURRENT_COMMANDS: usize = 64;
+
+const MAX_OVERLOAD_RESPONSES: usize = 16;
+const OVERLOAD_RESPONSE_TIMEOUT: Duration = Duration::from_secs(2);
 
 const MAX_AUTOCOMPLETE_CHOICES: usize = 25;
 const MAX_AUTOCOMPLETE_NAME_LENGTH: usize = 100;
@@ -210,12 +213,16 @@ where
         };
         let resolved = resolve_command(command, &command_data.options)?;
         let descriptor = resolved.command.descriptor();
+        let option_depth = resolved.path.len() - 1;
+        let focused_index =
+            if interaction_kind == InteractionType::APPLICATION_COMMAND_AUTOCOMPLETE {
+                Some(focused_option_index(resolved.options, &resolved.path)?)
+            } else {
+                None
+            };
         let runtime = Arc::new(self.runtime(rest.clone()));
         let interaction = Arc::from(interaction);
-        let command_data = Arc::new(command_data);
-
-        if interaction_kind == InteractionType::APPLICATION_COMMAND_AUTOCOMPLETE {
-            let focused_index = focused_option_index(&resolved.options, &resolved.path)?;
+        if let Some(focused_index) = focused_index {
             let focused = &resolved.options[focused_index];
             let Some(option_descriptor) = descriptor.options.iter().find(|option| {
                 option.name == focused.name && option.kind == focused.kind && option.autocomplete
@@ -232,12 +239,13 @@ where
                     path: resolved.path.join(" "),
                     option: focused.name.clone(),
                 })?;
+            let path = resolved.path;
             let context = AutocompleteContext::new(
                 runtime,
                 interaction,
-                command_data,
-                resolved.path,
-                resolved.options,
+                Arc::new(command_data),
+                path,
+                option_depth,
                 focused_index,
                 shard_id,
             );
@@ -259,12 +267,13 @@ where
             .command
             .shared_policy()
             .ok_or_else(|| Error::UnknownCommandPath(resolved.path.join(" ")))?;
+        let path = resolved.path;
         let context = Context::new(
             runtime,
             interaction,
-            command_data,
-            resolved.path,
-            resolved.options,
+            Arc::new(command_data),
+            path,
+            option_depth,
             shard_id,
         );
 
@@ -284,8 +293,19 @@ where
         let mut commands = JoinSet::new();
         let mut synchronized = self.registration == Registration::None;
 
-        while let Some(event) = shards.next_event().await {
-            reap_completed_commands(&mut commands)?;
+        let overload_slots = Arc::new(Semaphore::new(MAX_OVERLOAD_RESPONSES));
+
+        loop {
+            let event = tokio::select! {
+                result = commands.join_next(), if !commands.is_empty() => {
+                    report_completed_command(result);
+                    continue;
+                }
+                event = shards.next_event() => event,
+            };
+            let Some(event) = event else {
+                break;
+            };
             let event = event?;
 
             if !synchronized && let Some(application_id) = ready_application_id(&event.event)? {
@@ -293,22 +313,49 @@ where
                 synchronized = true;
             }
 
-            match self.prepare_dispatch(rest, &event.event, Some(event.shard_id))? {
+            let prepared = match self.prepare_dispatch(rest, &event.event, Some(event.shard_id)) {
+                Ok(prepared) => prepared,
+                Err(_) => {
+                    observability::interaction_rejected();
+                    continue;
+                }
+            };
+            match prepared {
                 PreparedDispatch::Command(command) => {
+                    let context = command.context.clone();
                     if let Some(future) = command.try_execute()? {
                         commands.spawn(future);
+                    } else {
+                        spawn_overload_response(
+                            &mut commands,
+                            &overload_slots,
+                            context.rest(),
+                            context.interaction(),
+                            false,
+                        );
                     }
                 }
                 PreparedDispatch::Autocomplete(autocomplete) => {
+                    let context = autocomplete.context.clone();
                     if let Some(future) = autocomplete.try_execute()? {
                         commands.spawn(future);
+                    } else {
+                        spawn_overload_response(
+                            &mut commands,
+                            &overload_slots,
+                            context.rest(),
+                            context.interaction(),
+                            true,
+                        );
                     }
                 }
                 PreparedDispatch::Ignored | PreparedDispatch::Unregistered(_) => {}
             }
         }
 
-        reap_completed_commands(&mut commands)?;
+        while let Some(result) = commands.try_join_next() {
+            report_completed_command(Some(result));
+        }
         Ok(())
     }
 }
@@ -430,19 +477,19 @@ impl<D> FrameworkBuilder<D> {
 struct ResolvedCommand<'a, D> {
     command: &'a SlashCommand<D>,
     path: Vec<&'static str>,
-    options: Vec<ApplicationCommandInteractionDataOption>,
+    options: &'a [ApplicationCommandInteractionDataOption],
 }
 
 fn resolve_command<'a, D>(
     command: &'a SlashCommand<D>,
-    submitted: &[ApplicationCommandInteractionDataOption],
+    submitted: &'a [ApplicationCommandInteractionDataOption],
 ) -> Result<ResolvedCommand<'a, D>> {
     let mut path = vec![command.descriptor().name];
     if command.is_leaf() {
         return Ok(ResolvedCommand {
             command,
             path,
-            options: submitted.to_vec(),
+            options: submitted,
         });
     }
 
@@ -467,7 +514,7 @@ fn resolve_command<'a, D>(
         return Ok(ResolvedCommand {
             command: child,
             path,
-            options: branch.options.clone(),
+            options: &branch.options,
         });
     }
 
@@ -494,7 +541,7 @@ fn resolve_command<'a, D>(
     Ok(ResolvedCommand {
         command: leaf,
         path,
-        options: nested.options.clone(),
+        options: &nested.options,
     })
 }
 
@@ -789,17 +836,66 @@ fn ready_application_id(event: &GatewayEvent) -> Result<Option<ApplicationId>> {
     Ok(Some(ready.application.id))
 }
 
-fn reap_completed_commands(commands: &mut JoinSet<Result<()>>) -> Result<()> {
-    while let Some(result) = commands.try_join_next() {
-        match result {
-            Ok(Ok(())) | Ok(Err(_)) => {
-                // Configured command errors are handled inside the command lifecycle.
-            }
-            Err(error) => return Err(Error::CommandTask(error)),
-        }
+fn report_completed_command(
+    result: Option<std::result::Result<Result<()>, tokio::task::JoinError>>,
+) {
+    match result {
+        Some(Ok(Err(_))) => observability::managed_task_failed(),
+        Some(Err(_)) => observability::managed_task_join_failed(),
+        Some(Ok(Ok(()))) | None => {}
     }
+}
 
-    Ok(())
+fn overload_response(autocomplete: bool) -> InteractionResponse {
+    if autocomplete {
+        InteractionResponse {
+            kind: InteractionCallbackType::APPLICATION_COMMAND_AUTOCOMPLETE_RESULT,
+            data: Some(InteractionCallbackData::Autocomplete(
+                AutocompleteInteractionCallbackData {
+                    choices: Vec::new(),
+                },
+            )),
+        }
+    } else {
+        let mut data = gloamwire::model::InteractionMessageData::content(
+            "The bot is busy. Please try again shortly.".to_owned(),
+        );
+        data.flags = Some(gloamwire::model::MessageFlags::EPHEMERAL);
+        InteractionResponse::message(data)
+    }
+}
+
+fn spawn_overload_response(
+    commands: &mut JoinSet<Result<()>>,
+    slots: &Arc<Semaphore>,
+    rest: &RestClient,
+    interaction: &Interaction,
+    autocomplete: bool,
+) {
+    observability::capacity_rejected();
+    let Ok(permit) = Arc::clone(slots).try_acquire_owned() else {
+        observability::overload_response_skipped();
+        return;
+    };
+    let rest = rest.clone();
+    let id = interaction.id;
+    let token = interaction.token.clone();
+    commands.spawn(async move {
+        let _permit = permit;
+        let response = overload_response(autocomplete);
+        let query = CreateInteractionResponseQuery::default();
+        if !matches!(
+            tokio::time::timeout(
+                OVERLOAD_RESPONSE_TIMEOUT,
+                rest.create_interaction_response(id, &token, &response, &query),
+            )
+            .await,
+            Ok(Ok(_))
+        ) {
+            observability::overload_response_failed();
+        }
+        Ok(())
+    });
 }
 
 #[cfg(test)]

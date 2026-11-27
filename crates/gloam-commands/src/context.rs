@@ -17,7 +17,7 @@ pub struct Context<D> {
     interaction: Arc<Interaction>,
     command_data: Arc<ApplicationCommandInteractionData>,
     command_path: Arc<[&'static str]>,
-    command_options: Arc<[ApplicationCommandInteractionDataOption]>,
+    option_depth: usize,
     shard_id: Option<ShardId>,
     response_state: Arc<Mutex<ResponseState>>,
 }
@@ -28,7 +28,7 @@ impl<D> Context<D> {
         interaction: Arc<Interaction>,
         command_data: Arc<ApplicationCommandInteractionData>,
         command_path: Vec<&'static str>,
-        command_options: Vec<ApplicationCommandInteractionDataOption>,
+        option_depth: usize,
         shard_id: Option<ShardId>,
     ) -> Self {
         Self {
@@ -36,7 +36,7 @@ impl<D> Context<D> {
             interaction,
             command_data,
             command_path: command_path.into(),
-            command_options: command_options.into(),
+            option_depth,
             shard_id,
             response_state: Arc::new(Mutex::new(ResponseState::Pending)),
         }
@@ -81,7 +81,11 @@ impl<D> Context<D> {
     /// Returns typed extraction access to the resolved leaf option scope.
     #[must_use]
     pub fn command_options(&self) -> CommandOptions<'_> {
-        CommandOptions::from_slice(&self.command_options)
+        CommandOptions::from_slice(self.leaf_options())
+    }
+
+    fn leaf_options(&self) -> &[ApplicationCommandInteractionDataOption] {
+        crate::options::leaf_options(&self.command_data, self.option_depth)
     }
 
     /// Returns the registered top-level slash-command name being executed.
@@ -108,7 +112,7 @@ impl<D> Clone for Context<D> {
             interaction: Arc::clone(&self.interaction),
             command_data: Arc::clone(&self.command_data),
             command_path: Arc::clone(&self.command_path),
-            command_options: Arc::clone(&self.command_options),
+            option_depth: self.option_depth,
             shard_id: self.shard_id,
             response_state: Arc::clone(&self.response_state),
         }
