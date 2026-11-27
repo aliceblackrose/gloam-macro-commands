@@ -73,4 +73,4 @@ Normal command execution policy is evaluated inside the spawned task before the 
 
 Errors that occur while parsing or preparing an interaction are returned directly by `dispatch(...)` / `dispatch_shard(...)`. Errors produced after a handler is spawned are returned by `CommandTask::join()`.
 
-Until a centralized command-error handler is configured in Phase 11, applications that need visibility into handler failures should retain or join returned `CommandTask` handles asynchronously rather than dropping every handle.
+Applications that need visibility into handler failures should retain or join returned `CommandTask` handles asynchronously rather than dropping every handle. A centralized command-error handler can also handle normal command failures. Managed dispatch attempts bounded overload acknowledgements; manual dispatch leaves capacity handling to the caller.

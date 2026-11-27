@@ -214,12 +214,12 @@ where
         let resolved = resolve_command(command, &command_data.options)?;
         let descriptor = resolved.command.descriptor();
         let option_depth = resolved.path.len() - 1;
-        let focused_index =
-            if interaction_kind == InteractionType::APPLICATION_COMMAND_AUTOCOMPLETE {
-                Some(focused_option_index(resolved.options, &resolved.path)?)
-            } else {
-                None
-            };
+        let focused_index = if interaction_kind == InteractionType::APPLICATION_COMMAND_AUTOCOMPLETE
+        {
+            Some(focused_option_index(resolved.options, &resolved.path)?)
+        } else {
+            None
+        };
         let runtime = Arc::new(self.runtime(rest.clone()));
         let interaction = Arc::from(interaction);
         if let Some(focused_index) = focused_index {
@@ -307,6 +307,9 @@ where
                 break;
             };
             let event = event?;
+            while let Some(result) = commands.try_join_next() {
+                report_completed_command(Some(result));
+            }
 
             if !synchronized && let Some(application_id) = ready_application_id(&event.event)? {
                 self.synchronize_commands(rest, application_id).await?;
