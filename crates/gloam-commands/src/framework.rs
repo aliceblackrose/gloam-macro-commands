@@ -556,8 +556,7 @@ fn resolve_command<'a, D>(
     else {
         return Err(Error::UnknownCommandPath(format!(
             "{} {}",
-            path[0],
-            branch.name
+            path[0], branch.name
         )));
     };
     path[1] = child.descriptor().name;

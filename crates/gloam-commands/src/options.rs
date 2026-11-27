@@ -1,8 +1,7 @@
 use gloamwire::model::{
     ApplicationCommandInteractionData, ApplicationCommandInteractionDataOption,
-    ApplicationCommandInteractionValue, ApplicationCommandNumericValue, ApplicationCommandOptionType,
-    AttachmentId, ChannelId,
-    RoleId, UserId,
+    ApplicationCommandInteractionValue, ApplicationCommandNumericValue,
+    ApplicationCommandOptionType, AttachmentId, ChannelId, RoleId, UserId,
 };
 
 use crate::{CommandChoiceDescriptor, CommandChoiceValue, CommandOptionDescriptor, Error, Result};
@@ -81,8 +80,12 @@ fn validate_value(
         (Kind::STRING, Value::String(value)) => {
             let length = value.chars().count();
             if length > 6000
-                || descriptor.min_length.is_some_and(|min| length < min as usize)
-                || descriptor.max_length.is_some_and(|max| length > max as usize)
+                || descriptor
+                    .min_length
+                    .is_some_and(|min| length < min as usize)
+                || descriptor
+                    .max_length
+                    .is_some_and(|max| length > max as usize)
             {
                 return Err(invalid());
             }
@@ -104,25 +107,38 @@ fn validate_value(
         {
             Some(*value)
         }
-        (Kind::USER | Kind::ROLE | Kind::CHANNEL | Kind::ATTACHMENT | Kind::MENTIONABLE,
-            Value::String(value)) if value.parse::<u64>().is_ok_and(|id| id != 0) => None,
+        (
+            Kind::USER | Kind::ROLE | Kind::CHANNEL | Kind::ATTACHMENT | Kind::MENTIONABLE,
+            Value::String(value),
+        ) if value.parse::<u64>().is_ok_and(|id| id != 0) => None,
         _ => return Err(invalid()),
     };
     if let Some(number) = number
-        && (descriptor.min_value.is_some_and(|min| number < numeric_bound(min))
-            || descriptor.max_value.is_some_and(|max| number > numeric_bound(max)))
+        && (descriptor
+            .min_value
+            .is_some_and(|min| number < numeric_bound(min))
+            || descriptor
+                .max_value
+                .is_some_and(|max| number > numeric_bound(max)))
     {
         return Err(invalid());
     }
     if !descriptor.choices.is_empty()
-        && !descriptor.choices.iter().any(|choice| match (choice.value, value) {
-            (CommandChoiceValue::String(expected), Value::String(actual)) => expected == actual,
-            (CommandChoiceValue::Integer(expected), Value::Integer(actual)) => expected == *actual,
-            (CommandChoiceValue::Number(expected), _) => number == Some(expected),
-            _ => false,
-        })
+        && !descriptor
+            .choices
+            .iter()
+            .any(|choice| match (choice.value, value) {
+                (CommandChoiceValue::String(expected), Value::String(actual)) => expected == actual,
+                (CommandChoiceValue::Integer(expected), Value::Integer(actual)) => {
+                    expected == *actual
+                }
+                (CommandChoiceValue::Number(expected), _) => number == Some(expected),
+                _ => false,
+            })
     {
-        return Err(Error::InvalidChoice { name: descriptor.name });
+        return Err(Error::InvalidChoice {
+            name: descriptor.name,
+        });
     }
     Ok(())
 }
