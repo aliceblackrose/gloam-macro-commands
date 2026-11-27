@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
 
 use gloamwire::model::ApplicationCommandOptionType;
+use tokio::sync::Semaphore;
 
 use crate::{Error, Result, SlashCommand};
 
@@ -111,7 +112,10 @@ fn validate_leaf<D>(command: &SlashCommand<D>, path: &str) -> Result<()> {
     let policy = command
         .policy()
         .expect("leaf commands always carry an execution policy");
-    if policy.max_concurrent_executions() == Some(0) {
+    if policy
+        .max_concurrent_executions()
+        .is_some_and(|limit| limit == 0 || limit > Semaphore::MAX_PERMITS)
+    {
         return Err(Error::InvalidCommandPolicy(path.to_owned()));
     }
 

@@ -340,9 +340,13 @@ pub(crate) fn expand(attribute: TokenStream, item: TokenStream) -> Result<TokenS
     );
 
     let option_descriptors = options.iter().map(option_descriptor_tokens);
+    let context_ident = format_ident!("__gloam_context", span = proc_macro2::Span::mixed_site());
     let option_idents = options
         .iter()
-        .map(|option| &option.ident)
+        .enumerate()
+        .map(|(index, _)| {
+            format_ident!("__gloam_option_{index}", span = proc_macro2::Span::mixed_site())
+        })
         .collect::<Vec<_>>();
     let option_types = options.iter().map(|option| &option.ty).collect::<Vec<_>>();
     let option_names = options
@@ -362,12 +366,12 @@ pub(crate) fn expand(attribute: TokenStream, item: TokenStream) -> Result<TokenS
         .collect::<Vec<_>>();
 
     let handler_body = if options.is_empty() {
-        quote! { ::std::boxed::Box::pin(#function_name(ctx)) }
+        quote! { ::std::boxed::Box::pin(#function_name(#context_ident)) }
     } else {
         quote! {
             ::std::boxed::Box::pin(async move {
                 let (#(#option_idents,)*) = {
-                    let options = ctx.command_options();
+                    let options = #context_ident.command_options();
                     (#(
                         <#option_types as ::gloam_commands::CommandOption>::extract(
                             &options,
@@ -375,7 +379,7 @@ pub(crate) fn expand(attribute: TokenStream, item: TokenStream) -> Result<TokenS
                         )?,
                     )*)
                 };
-                #function_name(ctx, #(#option_idents),*).await
+                #function_name(#context_ident, #(#option_idents),*).await
             })
         }
     };
@@ -456,7 +460,7 @@ pub(crate) fn expand(attribute: TokenStream, item: TokenStream) -> Result<TokenS
         #function
 
         #[doc(hidden)]
-        fn #handler_name(ctx: #context_type) -> ::gloam_commands::CommandFuture {
+        fn #handler_name(#context_ident: #context_type) -> ::gloam_commands::CommandFuture {
             #handler_body
         }
 

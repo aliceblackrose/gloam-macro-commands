@@ -403,7 +403,9 @@ impl<D> FrameworkBuilder<D> {
 
     /// Validates command registration and builds the framework.
     pub fn build(self) -> Result<Framework<D>> {
-        if self.max_concurrent_commands == 0 {
+        if self.max_concurrent_commands == 0
+            || self.max_concurrent_commands > Semaphore::MAX_PERMITS
+        {
             return Err(Error::InvalidConcurrencyLimit);
         }
 

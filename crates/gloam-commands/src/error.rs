@@ -102,8 +102,8 @@ pub enum Error {
         retry_after: Duration,
     },
 
-    /// The configured global command-concurrency limit was zero.
-    #[error("max concurrent commands must be greater than zero")]
+    /// The configured global command-concurrency limit was outside semaphore capacity.
+    #[error("max concurrent commands must be between one and the semaphore capacity")]
     InvalidConcurrencyLimit,
 
     /// An `INTERACTION_CREATE` payload could not be decoded.

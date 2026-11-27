@@ -227,6 +227,27 @@ async fn cooldown_is_scoped_per_invoking_user() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn rejects_oversized_global_concurrency_without_panicking() {
+    assert!(matches!(
+        Framework::builder(())
+            .max_concurrent_commands(Semaphore::MAX_PERMITS + 1)
+            .build(),
+        Err(Error::InvalidConcurrencyLimit)
+    ));
+}
+
+#[test]
+fn rejects_oversized_command_concurrency_without_panicking() {
+    let policy = CommandPolicy::new().max_concurrency(Semaphore::MAX_PERMITS + 1);
+    assert!(matches!(
+        Framework::builder(State::new())
+            .command(SlashCommand::new_with_policy(&POLICY, handler, policy))
+            .build(),
+        Err(Error::InvalidCommandPolicy(path)) if path == "policy"
+    ));
+}
+
 struct ConcurrencyState {
     entered: AtomicUsize,
     release: Semaphore,
