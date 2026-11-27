@@ -9,13 +9,16 @@ use std::{
 use gloamwire::model::{InteractionContextType, Permissions, UserId};
 use tokio::sync::{Mutex, Semaphore};
 
-use crate::{Context, Error, Result};
+use crate::{AutocompleteContext, Context, Error, Result};
 
 /// Boxed future returned by generated command-check adapters.
 pub type CheckFuture = Pin<Box<dyn Future<Output = Result<bool>> + Send + 'static>>;
 
 /// Erased custom check function stored in a command policy.
 pub type CheckHandler<D> = fn(Context<D>) -> CheckFuture;
+
+/// An explicit authorization check for autocomplete interactions.
+pub type AutocompleteCheck<D> = fn(AutocompleteContext<D>) -> CheckFuture;
 
 /// One generated custom command check.
 #[derive(Clone, Copy)]
@@ -51,6 +54,7 @@ impl<D> CheckDescriptor<D> {
 /// received interaction immediately before the user handler runs.
 pub struct CommandPolicy<D> {
     checks: Vec<CheckDescriptor<D>>,
+    autocomplete_checks: Vec<AutocompleteCheck<D>>,
     contexts: Vec<InteractionContextType>,
     member_permissions: Option<Permissions>,
     bot_permissions: Option<Permissions>,
@@ -66,6 +70,7 @@ impl<D> CommandPolicy<D> {
     pub fn new() -> Self {
         Self {
             checks: Vec::new(),
+            autocomplete_checks: Vec::new(),
             contexts: Vec::new(),
             member_permissions: None,
             bot_permissions: None,
@@ -80,6 +85,16 @@ impl<D> CommandPolicy<D> {
     #[must_use]
     pub fn check(mut self, check: CheckDescriptor<D>) -> Self {
         self.checks.push(check);
+        self
+    }
+
+    /// Adds an autocomplete-specific authorization check.
+    ///
+    /// Commands with normal custom checks deny autocomplete by default unless
+    /// at least one explicit autocomplete check is configured.
+    #[must_use]
+    pub fn autocomplete_check(mut self, check: AutocompleteCheck<D>) -> Self {
+        self.autocomplete_checks.push(check);
         self
     }
 
@@ -171,18 +186,18 @@ impl<D> CommandPolicy<D> {
         self.command_slots.as_ref()
     }
 
-    pub(crate) async fn evaluate(&self, context: &Context<D>) -> Result<()>
-    where
-        D: Send + Sync + 'static,
-    {
-        let interaction = context.interaction();
+    fn authorize(
+        &self,
+        interaction: &gloamwire::model::Interaction,
+        path: &[&str],
+    ) -> Result<()> {
 
         if !self.contexts.is_empty()
             && interaction
                 .context
                 .is_none_or(|current| !self.contexts.contains(&current))
         {
-            return Err(Error::CommandContextNotAllowed(command_path(context)));
+            return Err(Error::CommandContextNotAllowed(path.join(" ")));
         }
 
         if let Some(required) = self.member_permissions {
@@ -193,7 +208,7 @@ impl<D> CommandPolicy<D> {
                 .unwrap_or_else(Permissions::empty);
             if !actual.contains(required) {
                 return Err(Error::MissingMemberPermissions {
-                    path: command_path(context),
+                    path: path.join(" "),
                     required,
                     actual,
                 });
@@ -206,13 +221,41 @@ impl<D> CommandPolicy<D> {
                 .unwrap_or_else(Permissions::empty);
             if !actual.contains(required) {
                 return Err(Error::MissingBotPermissions {
-                    path: command_path(context),
+                    path: path.join(" "),
                     required,
                     actual,
                 });
             }
         }
 
+        Ok(())
+    }
+
+    pub(crate) async fn authorize_autocomplete(&self, context: &AutocompleteContext<D>) -> Result<()>
+    where
+        D: Send + Sync + 'static,
+    {
+        self.authorize(context.interaction(), context.command_path())?;
+        if !self.checks.is_empty() && self.autocomplete_checks.is_empty() {
+            return Err(Error::AutocompleteAuthorizationRequired(
+                context.command_path().join(" "),
+            ));
+        }
+        for check in &self.autocomplete_checks {
+            if !check(context.clone()).await? {
+                return Err(Error::AutocompleteAuthorizationRequired(
+                    context.command_path().join(" "),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn evaluate(&self, context: &Context<D>) -> Result<()>
+    where
+        D: Send + Sync + 'static,
+    {
+        self.authorize(context.interaction(), context.command_path())?;
         for check in &self.checks {
             if !(check.handler)(context.clone()).await? {
                 return Err(Error::CommandCheckFailed {

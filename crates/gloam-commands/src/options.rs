@@ -95,12 +95,23 @@ impl_copy_option!(
     ApplicationCommandInteractionValue::Integer,
     "i64"
 );
-impl_copy_option!(
-    f64,
-    ApplicationCommandOptionType::NUMBER,
-    ApplicationCommandInteractionValue::Number,
-    "f64"
-);
+impl CommandOption for f64 {
+    const KIND: ApplicationCommandOptionType = ApplicationCommandOptionType::NUMBER;
+
+    fn extract(options: &CommandOptions<'_>, name: &'static str) -> Result<Self> {
+        let option = required_option(options, name)?;
+        validate_kind(option, name, Self::KIND, "f64")?;
+        let value = match option.value.as_ref() {
+            Some(ApplicationCommandInteractionValue::Number(value)) => *value,
+            Some(ApplicationCommandInteractionValue::Integer(value)) => *value as f64,
+            _ => return Err(invalid_option(name, "f64")),
+        };
+        if !(-9_007_199_254_740_992.0..=9_007_199_254_740_992.0).contains(&value) {
+            return Err(invalid_option(name, "f64"));
+        }
+        Ok(value)
+    }
+}
 
 macro_rules! impl_id_option {
     ($type:ty, $kind:path, $expected:literal) => {
@@ -243,6 +254,15 @@ mod tests {
         assert!(bool::extract(&options, "enabled").expect("bool"));
         assert_eq!(i64::extract(&options, "count").expect("integer"), 42);
         assert_eq!(f64::extract(&options, "ratio").expect("number"), 1.5);
+    }
+
+    #[test]
+    fn extracts_integer_encoded_number_from_json() {
+        let submitted: ApplicationCommandInteractionDataOption =
+            serde_json::from_value(serde_json::json!({"name": "ratio", "type": 10, "value": 42}))
+                .expect("valid option");
+        let options = CommandOptions::from_slice(std::slice::from_ref(&submitted));
+        assert_eq!(f64::extract(&options, "ratio").expect("number"), 42.0);
     }
 
     #[test]

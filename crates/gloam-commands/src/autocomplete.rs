@@ -98,32 +98,40 @@ impl<D> AutocompleteHandlerDescriptor<D> {
 /// Autocomplete has different acknowledgement semantics from command execution,
 /// so this type deliberately does not expose normal interaction response helpers.
 pub struct AutocompleteContext<D> {
-    runtime: Arc<Runtime<D>>,
-    interaction: Arc<Interaction>,
-    command_data: Arc<ApplicationCommandInteractionData>,
-    command_path: Arc<[&'static str]>,
+    inner: Arc<AutocompleteContextInner<D>>,
+    shard_id: Option<ShardId>,
+}
+
+struct AutocompleteContextInner<D> {
+    runtime: Runtime<D>,
+    interaction: Interaction,
+    command_data: ApplicationCommandInteractionData,
+    command_path: [&'static str; 3],
     option_depth: usize,
     focused_index: usize,
-    shard_id: Option<ShardId>,
 }
 
 impl<D> AutocompleteContext<D> {
     pub(crate) fn new(
-        runtime: Arc<Runtime<D>>,
-        interaction: Arc<Interaction>,
-        command_data: Arc<ApplicationCommandInteractionData>,
+        runtime: Runtime<D>,
+        interaction: Interaction,
+        command_data: ApplicationCommandInteractionData,
         command_path: Vec<&'static str>,
         option_depth: usize,
         focused_index: usize,
         shard_id: Option<ShardId>,
     ) -> Self {
+        let mut path = [""; 3];
+        path[..command_path.len()].copy_from_slice(&command_path);
         Self {
-            runtime,
-            interaction,
-            command_data,
-            command_path: command_path.into(),
-            option_depth,
-            focused_index,
+            inner: Arc::new(AutocompleteContextInner {
+                runtime,
+                interaction,
+                command_data,
+                command_path: path,
+                option_depth,
+                focused_index,
+            }),
             shard_id,
         }
     }
@@ -131,37 +139,37 @@ impl<D> AutocompleteContext<D> {
     /// Returns the shared command runtime.
     #[must_use]
     pub fn runtime(&self) -> &Runtime<D> {
-        &self.runtime
+        &self.inner.runtime
     }
 
     /// Returns the Gloamwire REST client.
     #[must_use]
     pub fn rest(&self) -> &RestClient {
-        self.runtime.rest()
+        self.inner.runtime.rest()
     }
 
     /// Returns application-owned shared state.
     #[must_use]
     pub fn data(&self) -> &D {
-        self.runtime.data()
+        self.inner.runtime.data()
     }
 
     /// Returns the Discord autocomplete interaction.
     #[must_use]
     pub fn interaction(&self) -> &Interaction {
-        &self.interaction
+        &self.inner.interaction
     }
 
     /// Returns parsed top-level application-command data for this interaction.
     #[must_use]
     pub fn command_data(&self) -> &ApplicationCommandInteractionData {
-        &self.command_data
+        &self.inner.command_data
     }
 
     /// Returns the resolved command path from top-level command to leaf.
     #[must_use]
     pub fn command_path(&self) -> &[&'static str] {
-        &self.command_path
+        &self.inner.command_path[..=self.inner.option_depth]
     }
 
     /// Returns typed extraction access to the resolved leaf option scope.
@@ -177,11 +185,11 @@ impl<D> AutocompleteContext<D> {
     /// Returns the single option currently focused by Discord.
     #[must_use]
     pub fn focused_option(&self) -> &ApplicationCommandInteractionDataOption {
-        &self.leaf_options()[self.focused_index]
+        &self.leaf_options()[self.inner.focused_index]
     }
 
     fn leaf_options(&self) -> &[ApplicationCommandInteractionDataOption] {
-        crate::options::leaf_options(&self.command_data, self.option_depth)
+        crate::options::leaf_options(&self.inner.command_data, self.inner.option_depth)
     }
 
     /// Returns the registered name of the focused option.
@@ -199,7 +207,7 @@ impl<D> AutocompleteContext<D> {
     /// Returns the registered top-level command name.
     #[must_use]
     pub fn command_name(&self) -> &'static str {
-        self.command_path[0]
+        self.inner.command_path[0]
     }
 
     /// Returns the Gateway shard that received the interaction when known.
@@ -212,12 +220,7 @@ impl<D> AutocompleteContext<D> {
 impl<D> Clone for AutocompleteContext<D> {
     fn clone(&self) -> Self {
         Self {
-            runtime: Arc::clone(&self.runtime),
-            interaction: Arc::clone(&self.interaction),
-            command_data: Arc::clone(&self.command_data),
-            command_path: Arc::clone(&self.command_path),
-            option_depth: self.option_depth,
-            focused_index: self.focused_index,
+            inner: Arc::clone(&self.inner),
             shard_id: self.shard_id,
         }
     }

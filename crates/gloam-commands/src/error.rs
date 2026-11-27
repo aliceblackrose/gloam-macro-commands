@@ -44,6 +44,18 @@ pub enum Error {
         option: String,
     },
 
+    /// Autocomplete could not satisfy its authorization policy.
+    #[error("autocomplete authorization denied for `{0}`")]
+    AutocompleteAuthorizationRequired(String),
+
+    /// A command or autocomplete task exceeded its execution deadline.
+    #[error("interaction execution deadline exceeded")]
+    ExecutionTimeout,
+
+    /// An invalid zero execution timeout was configured.
+    #[error("execution timeouts must be greater than zero")]
+    InvalidExecutionTimeout,
+
     /// An autocomplete handler returned choices Discord cannot accept.
     #[error("invalid autocomplete response: {0}")]
     InvalidAutocompleteResponse(String),

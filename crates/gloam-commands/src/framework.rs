@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{future::Future, sync::Arc, time::Duration};
 
 use gloamwire::{
     RestClient,
@@ -21,13 +21,17 @@ use tokio::{
 
 use crate::{
     AutocompleteChoice, AutocompleteChoiceValue, AutocompleteContext, AutocompleteHandler,
-    CommandErrorHandler, CommandFuture, CommandHandler, CommandHook, CommandPolicy,
+    CommandErrorHandler, CommandHandler, CommandHook, CommandPolicy,
     CommandRegistry, CommandTask, Context, DispatchOutcome, Error, Registration, Result, Runtime,
     SlashCommand, observability,
 };
 
 /// Default upper bound for simultaneously executing command handlers.
 pub const DEFAULT_MAX_CONCURRENT_COMMANDS: usize = 64;
+
+const DEFAULT_COMMAND_TIMEOUT: Duration = Duration::from_secs(120);
+const DEFAULT_AUTOCOMPLETE_TIMEOUT: Duration = Duration::from_secs(2);
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 const MAX_OVERLOAD_RESPONSES: usize = 16;
 const OVERLOAD_RESPONSE_TIMEOUT: Duration = Duration::from_secs(2);
@@ -46,6 +50,8 @@ pub struct Framework<D> {
     registry: CommandRegistry<D>,
     registration: Registration,
     max_concurrent_commands: usize,
+    command_timeout: Duration,
+    autocomplete_timeout: Duration,
     command_slots: Arc<Semaphore>,
     before_hooks: Arc<[CommandHook<D>]>,
     after_hooks: Arc<[CommandHook<D>]>,
@@ -220,8 +226,8 @@ where
         } else {
             None
         };
-        let runtime = Arc::new(self.runtime(rest.clone()));
-        let interaction = Arc::from(interaction);
+        let runtime = self.runtime(rest.clone());
+        let interaction = *interaction;
         if let Some(focused_index) = focused_index {
             let focused = &resolved.options[focused_index];
             let Some(option_descriptor) = descriptor.options.iter().find(|option| {
@@ -243,7 +249,7 @@ where
             let context = AutocompleteContext::new(
                 runtime,
                 interaction,
-                Arc::new(command_data),
+                command_data,
                 path,
                 option_depth,
                 focused_index,
@@ -253,6 +259,10 @@ where
             return Ok(PreparedDispatch::Autocomplete(PreparedAutocomplete {
                 command_name: descriptor.name,
                 option_kind: option_descriptor.kind,
+                policy: resolved.command.shared_policy().ok_or_else(|| {
+                    Error::UnknownCommandPath(context.command_path().join(" "))
+                })?,
+                timeout: self.autocomplete_timeout,
                 handler,
                 context,
                 command_slots: Arc::clone(&self.command_slots),
@@ -271,7 +281,7 @@ where
         let context = Context::new(
             runtime,
             interaction,
-            Arc::new(command_data),
+            command_data,
             path,
             option_depth,
             shard_id,
@@ -281,6 +291,7 @@ where
             command_name: descriptor.name,
             handler,
             policy,
+            timeout: self.command_timeout,
             context,
             command_slots: Arc::clone(&self.command_slots),
             before_hooks: Arc::clone(&self.before_hooks),
@@ -356,8 +367,18 @@ where
             }
         }
 
-        while let Some(result) = commands.try_join_next() {
-            report_completed_command(Some(result));
+        if tokio::time::timeout(SHUTDOWN_TIMEOUT, async {
+            while let Some(result) = commands.join_next().await {
+                report_completed_command(Some(result));
+            }
+        })
+        .await
+        .is_err()
+        {
+            commands.abort_all();
+            while let Some(result) = commands.join_next().await {
+                report_completed_command(Some(result));
+            }
         }
         Ok(())
     }
@@ -369,6 +390,8 @@ pub struct FrameworkBuilder<D> {
     commands: Vec<SlashCommand<D>>,
     registration: Registration,
     max_concurrent_commands: usize,
+    command_timeout: Duration,
+    autocomplete_timeout: Duration,
     before_hooks: Vec<CommandHook<D>>,
     after_hooks: Vec<CommandHook<D>>,
     error_handler: Option<CommandErrorHandler<D>>,
@@ -383,6 +406,8 @@ impl<D> FrameworkBuilder<D> {
             commands: Vec::new(),
             registration: Registration::None,
             max_concurrent_commands: DEFAULT_MAX_CONCURRENT_COMMANDS,
+            command_timeout: DEFAULT_COMMAND_TIMEOUT,
+            autocomplete_timeout: DEFAULT_AUTOCOMPLETE_TIMEOUT,
             before_hooks: Vec::new(),
             after_hooks: Vec::new(),
             error_handler: None,
@@ -414,6 +439,20 @@ impl<D> FrameworkBuilder<D> {
     #[must_use]
     pub const fn max_concurrent_commands(mut self, limit: usize) -> Self {
         self.max_concurrent_commands = limit;
+        self
+    }
+
+    /// Bounds normal command execution, including policy and lifecycle hooks.
+    #[must_use]
+    pub const fn command_timeout(mut self, timeout: Duration) -> Self {
+        self.command_timeout = timeout;
+        self
+    }
+
+    /// Bounds autocomplete execution, including authorization and the callback.
+    #[must_use]
+    pub const fn autocomplete_timeout(mut self, timeout: Duration) -> Self {
+        self.autocomplete_timeout = timeout;
         self
     }
 
@@ -459,6 +498,10 @@ impl<D> FrameworkBuilder<D> {
             return Err(Error::InvalidConcurrencyLimit);
         }
 
+        if self.command_timeout.is_zero() || self.autocomplete_timeout.is_zero() {
+            return Err(Error::InvalidExecutionTimeout);
+        }
+
         let mut registry = CommandRegistry::new();
         for command in self.commands {
             registry.insert(command)?;
@@ -469,6 +512,8 @@ impl<D> FrameworkBuilder<D> {
             registry,
             registration: self.registration,
             max_concurrent_commands: self.max_concurrent_commands,
+            command_timeout: self.command_timeout,
+            autocomplete_timeout: self.autocomplete_timeout,
             command_slots: Arc::new(Semaphore::new(self.max_concurrent_commands)),
             before_hooks: self.before_hooks.into(),
             after_hooks: self.after_hooks.into(),
@@ -579,6 +624,7 @@ struct PreparedCommand<D> {
     command_name: &'static str,
     handler: CommandHandler<D>,
     policy: Arc<CommandPolicy<D>>,
+    timeout: Duration,
     context: Context<D>,
     command_slots: Arc<Semaphore>,
     before_hooks: Arc<[CommandHook<D>]>,
@@ -590,10 +636,11 @@ impl<D> PreparedCommand<D>
 where
     D: Send + Sync + 'static,
 {
-    fn try_execute(self) -> Result<Option<CommandFuture>> {
+    fn try_execute(self) -> Result<Option<impl Future<Output = Result<()>> + Send>> {
         let Self {
             handler,
             policy,
+            timeout,
             context,
             command_slots,
             before_hooks,
@@ -615,19 +662,23 @@ where
             Err(TryAcquireError::Closed) => return Err(Error::CommandSchedulerClosed),
         };
 
-        Ok(Some(Box::pin(async move {
+        Ok(Some(async move {
             let _permit = permit;
             let _command_permit = command_permit;
-            execute_command(
-                handler,
-                policy,
-                context,
-                before_hooks,
-                after_hooks,
-                error_handler,
+            tokio::time::timeout(
+                timeout,
+                execute_command(
+                    handler,
+                    policy,
+                    context,
+                    before_hooks,
+                    after_hooks,
+                    error_handler,
+                ),
             )
             .await
-        })))
+            .map_err(|_| Error::ExecutionTimeout)?
+        }))
     }
 }
 
@@ -689,6 +740,8 @@ struct PreparedAutocomplete<D> {
     command_name: &'static str,
     option_kind: ApplicationCommandOptionType,
     handler: AutocompleteHandler<D>,
+    policy: Arc<CommandPolicy<D>>,
+    timeout: Duration,
     context: AutocompleteContext<D>,
     command_slots: Arc<Semaphore>,
 }
@@ -697,10 +750,12 @@ impl<D> PreparedAutocomplete<D>
 where
     D: Send + Sync + 'static,
 {
-    fn try_execute(self) -> Result<Option<CommandFuture>> {
+    fn try_execute(self) -> Result<Option<impl Future<Output = Result<()>> + Send>> {
         let Self {
             option_kind,
             handler,
+            policy,
+            timeout,
             context,
             command_slots,
             ..
@@ -711,10 +766,15 @@ where
             Err(TryAcquireError::Closed) => return Err(Error::CommandSchedulerClosed),
         };
 
-        Ok(Some(Box::pin(async move {
+        Ok(Some(async move {
             let _permit = permit;
-            execute_autocomplete(option_kind, handler, context).await
-        })))
+            tokio::time::timeout(timeout, async {
+                policy.authorize_autocomplete(&context).await?;
+                execute_autocomplete(option_kind, handler, context).await
+            })
+            .await
+            .map_err(|_| Error::ExecutionTimeout)?
+        }))
     }
 }
 
