@@ -6,7 +6,7 @@ members = [
 resolver = "3"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"
@@ -14,7 +14,7 @@ repository = "https://github.com/aliceblackrose/gloam-macro-commands"
 
 [workspace.dependencies]
 gloamwire = { git = "https://github.com/aliceblackrose/gloamwire", rev = "86633878229c4cbfaedfe2c5c524186f7bd683f9" }
-gloam-commands-macros = { path = "crates/gloam-commands-macros", version = "0.1.0" }
+gloam-commands-macros = { path = "crates/gloam-commands-macros", version = "0.1.1" }
 regex = "1"
 serde = "1"
 serde_json = "1"
