@@ -920,7 +920,7 @@ mod tests {
         DispatchOutcome, Error, Framework, Registration, Result, SlashCommand,
     };
 
-    use super::{DEFAULT_MAX_CONCURRENT_COMMANDS, ready_application_id};
+    use super::{DEFAULT_MAX_CONCURRENT_COMMANDS, overload_response, ready_application_id};
 
     static PING: CommandDescriptor = CommandDescriptor::new("ping", "Check bot responsiveness");
     static SLOW: CommandDescriptor = CommandDescriptor::new("slow", "Exercise concurrency limits");
@@ -985,7 +985,13 @@ mod tests {
 
     fn nested_handler(ctx: Context<NestedDispatchState>) -> crate::CommandFuture {
         Box::pin(async move {
-            let count = i64::extract(&ctx.command_options(), "count")?;
+            let options = ctx.command_options();
+            let count = i64::extract(&options, "count")?;
+            let submitted = &ctx.command_data().options[0].options[0].options[0];
+            assert!(std::ptr::eq(
+                options.get("count").expect("count"),
+                submitted
+            ));
             *ctx.data().path.lock().expect("path mutex") = ctx.command_path().to_vec();
             ctx.data().count.store(count, Ordering::SeqCst);
             Ok(())
@@ -1026,6 +1032,31 @@ mod tests {
             ctx.data().active.fetch_sub(1, Ordering::SeqCst);
             Ok(())
         })
+    }
+
+    #[test]
+    fn overload_response_is_ephemeral_or_empty_autocomplete() {
+        use gloamwire::model::{InteractionCallbackData, InteractionCallbackType, MessageFlags};
+
+        let busy = overload_response(false);
+        assert_eq!(
+            busy.kind,
+            InteractionCallbackType::CHANNEL_MESSAGE_WITH_SOURCE
+        );
+        let Some(InteractionCallbackData::Message(data)) = busy.data else {
+            panic!("expected a message response");
+        };
+        assert_eq!(data.flags, Some(MessageFlags::EPHEMERAL));
+
+        let empty = overload_response(true);
+        assert_eq!(
+            empty.kind,
+            InteractionCallbackType::APPLICATION_COMMAND_AUTOCOMPLETE_RESULT
+        );
+        let Some(InteractionCallbackData::Autocomplete(data)) = empty.data else {
+            panic!("expected an autocomplete response");
+        };
+        assert!(data.choices.is_empty());
     }
 
     #[test]
