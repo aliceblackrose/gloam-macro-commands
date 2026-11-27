@@ -25,12 +25,14 @@ pub(crate) fn expand(attribute: TokenStream, item: TokenStream) -> Result<TokenS
         span = function_name.span()
     );
 
+    let context_ident = format_ident!("__gloam_context", span = proc_macro2::Span::mixed_site());
+
     Ok(quote! {
         #function
 
         #[doc(hidden)]
-        #visibility fn #handler_name(ctx: #context_type) -> ::gloam_commands::AutocompleteFuture {
-            ::std::boxed::Box::pin(#function_name(ctx))
+        #visibility fn #handler_name(#context_ident: #context_type) -> ::gloam_commands::AutocompleteFuture {
+            ::std::boxed::Box::pin(#function_name(#context_ident))
         }
     })
 }

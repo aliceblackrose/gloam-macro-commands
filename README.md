@@ -245,7 +245,7 @@ async fn moderate(ctx: Context<State>) -> Result<()> {
 
 Policy evaluation order is deterministic: allowed interaction context, invoking-member permissions, application permissions, custom checks in declaration order, cooldown reservation, then the user handler. A failed step returns a framework error and prevents later steps or handler business logic from running. Per-command capacity and the framework-wide execution bound are both reserved non-blockingly before a task is spawned, so saturation never creates an unbounded queue of waiter tasks.
 
-Cooldown state and per-command capacity are shared by the registered leaf rather than recreated per invocation. Cooldowns are scoped by invoking `UserId`. `max_concurrency` must be greater than zero and layers beneath `FrameworkBuilder::max_concurrent_commands(...)`; it does not replace the global bound.
+Cooldown state and per-command capacity are shared by the registered leaf rather than recreated per invocation. Cooldowns are scoped by invoking `UserId`. `max_concurrency` must be within Tokio's semaphore capacity and greater than zero and layers beneath `FrameworkBuilder::max_concurrent_commands(...)`; it does not replace the global bound.
 
 Runtime execution policy is intentionally separate from Discord command registration permissions. `member_permissions` and `bot_permissions` are eligibility checks against the received interaction immediately before execution; they do not mutate Discord's registered command permission/default-member-permission fields.
 
@@ -376,7 +376,7 @@ Available helpers:
 - `ctx.delete_response()` deletes the original response.
 - `ctx.followup(...)` and `ctx.followup_ephemeral(...)` create explicit followup messages after acknowledgement.
 
-A deferral fixes the visibility of the original response. Completing a public deferral with `reply_ephemeral(...)`, or an ephemeral deferral with `reply(...)`, returns a framework error rather than silently changing semantics. State advances only after a successful Gloamwire REST call, so failed acknowledgements remain retryable.
+A deferral fixes the visibility of the original response. Completing a public deferral with `reply_ephemeral(...)`, or an ephemeral deferral with `reply(...)`, returns a framework error rather than silently changing semantics. State-changing REST operations mark the response state uncertain while in flight. Confirmed validation failures restore the previous state; cancellation or ambiguous HTTP failures prevent automatic duplicate acknowledgement. Call `ctx.reconcile_response().await` to recover from a successful lookup of the original response. If lookup fails, the state remains uncertain. Explicit followups after deferral complete the original response and must match its visibility.
 
 ### Dispatch and execution
 
@@ -387,7 +387,9 @@ The managed runtime:
 - optionally synchronizes the registry once from the first typed `READY` event;
 - parses only `INTERACTION_CREATE` application-command payloads through Gloamwire's typed dispatch API;
 - routes registered chat-input command and autocomplete interactions through the local command registry;
-- resolves native subcommand/subcommand-group branches before handler scheduling;
+- resolves native subcommand/subcommand-group branches before handler scheduling, borrowing leaf options from the shared parsed command data;
+- isolates malformed or stale interactions and failed or panicking handler tasks from Gateway polling;
+- attempts a bounded ephemeral busy reply (or empty autocomplete result) when at capacity, using 16 independent slots and a two-second timeout; overload beyond that budget is dropped;
 - validates exactly one focused leaf option for autocomplete interactions;
 - preserves the receiving `ShardId` in `Context<D>` and `AutocompleteContext<D>`;
 - reserves the framework-wide execution slot before spawning command or autocomplete handlers;

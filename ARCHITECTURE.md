@@ -197,9 +197,9 @@ Gateway polling
     └── continue polling immediately
 ```
 
-`FrameworkBuilder::max_concurrent_commands(...)` controls the number of framework-owned command and autocomplete handler tasks. The default is finite. A zero limit is rejected at build time.
+`FrameworkBuilder::max_concurrent_commands(...)` controls the number of framework-owned command and autocomplete handler tasks. The default is finite. Zero and limits exceeding Tokio's semaphore capacity are rejected at build time.
 
-Manual dispatch surfaces saturation as `DispatchOutcome::AtCapacity`. The managed runtime also refuses to create a task when saturated and immediately continues Gateway polling. A later execution-policy phase can add application-configurable handling without weakening this scheduler invariant.
+Manual dispatch surfaces saturation as `DispatchOutcome::AtCapacity`. The managed runtime refuses to create additional handler tasks when saturated. It may schedule a busy acknowledgement using a separate non-blocking budget of 16 slots and a two-second timeout. Once that budget is full it drops excess interactions. Completed tasks are reaped independently of incoming Gateway traffic; malformed interaction and task errors are isolated and reported through redacted optional tracing. Gateway and registration failures still propagate.
 
 ## Managed runtime
 
@@ -286,7 +286,7 @@ Deferred
   ├── matching reply ──────► Responded       # edits @original
   ├── edit original ───────► Responded
   ├── delete original ─────► Deleted
-  └── followup ────────────► Deferred         # original remains deferred
+  └── followup ────────────► Responded        # completes original with matching visibility
 
 Responded
   ├── reply ───────────────► Responded        # creates followup
@@ -298,11 +298,11 @@ Deleted
   └── reply/followup ──────► Deleted          # followup webhook remains usable
 ```
 
-A Tokio mutex serializes transitions and stays held while the state-changing Gloamwire REST request is in flight. This prevents two cloned contexts from both deciding they own the initial acknowledgement. The state is advanced only after a successful REST call, so a failed initial reply/defer/edit/delete does not corrupt the local transition state.
+A Tokio mutex serializes transitions and stays held while the state-changing Gloamwire REST request is in flight. This prevents two cloned contexts from both deciding they own the initial acknowledgement. Before an original-response mutation the state is marked `Unknown`; success commits the new state, and definitive validation rejection restores the previous state. Cancellation or ambiguous HTTP failure leaves the state `Unknown` and blocks further response mutations until `reconcile_response()` successfully fetches the original message. An unsuccessful lookup does not prove that the initial acknowledgement was never sent.
 
 Deferral visibility is invariant for the original response. A public deferral cannot be completed through an ephemeral reply helper, and an ephemeral deferral cannot be completed through the public reply helper. Those cases return a framework error before sending an invalid or misleading request.
 
-Explicit `followup` calls require an acknowledged interaction. Automatic `reply` calls become followups once the original response is already acknowledged.
+Explicit `followup` calls require an acknowledged interaction and complete a deferred original response only when visibility matches. Automatic `reply` calls become followups once the original response is already acknowledged.
 
 Autocomplete interactions do not use this state machine; they produce the dedicated Discord autocomplete callback through the framework-owned handler return path.
 

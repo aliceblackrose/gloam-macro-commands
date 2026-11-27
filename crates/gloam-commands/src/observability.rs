@@ -42,3 +42,33 @@ pub(crate) fn command_error_handler_failed(path: &[&'static str]) {
     #[cfg(not(feature = "tracing"))]
     let _ = path;
 }
+
+pub(crate) fn interaction_rejected() {
+    #[cfg(feature = "tracing")]
+    tracing::warn!("malformed or stale slash command interaction rejected");
+}
+
+pub(crate) fn managed_task_failed() {
+    #[cfg(feature = "tracing")]
+    tracing::warn!("managed command or autocomplete task returned an unhandled error");
+}
+
+pub(crate) fn managed_task_join_failed() {
+    #[cfg(feature = "tracing")]
+    tracing::warn!("managed command or autocomplete task failed to join");
+}
+
+pub(crate) fn capacity_rejected() {
+    #[cfg(feature = "tracing")]
+    tracing::warn!("managed interaction rejected at capacity");
+}
+
+pub(crate) fn overload_response_skipped() {
+    #[cfg(feature = "tracing")]
+    tracing::warn!("overload acknowledgement budget exhausted");
+}
+
+pub(crate) fn overload_response_failed() {
+    #[cfg(feature = "tracing")]
+    tracing::warn!("overload acknowledgement failed or timed out");
+}

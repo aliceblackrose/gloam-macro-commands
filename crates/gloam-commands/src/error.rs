@@ -15,6 +15,10 @@ pub enum Error {
     #[error("duplicate slash-command path `{0}`")]
     DuplicateCommandPath(String),
 
+    /// Static command metadata violates Discord's registration constraints.
+    #[error("invalid slash-command descriptor at `{0}`")]
+    InvalidCommandDescriptor(String),
+
     /// A command tree exceeded Discord's native hierarchy or mixed invalid node types.
     #[error("invalid slash-command hierarchy at `{0}`")]
     InvalidCommandHierarchy(String),
@@ -102,8 +106,8 @@ pub enum Error {
         retry_after: Duration,
     },
 
-    /// The configured global command-concurrency limit was zero.
-    #[error("max concurrent commands must be greater than zero")]
+    /// The configured global command-concurrency limit was outside semaphore capacity.
+    #[error("max concurrent commands must be between one and the semaphore capacity")]
     InvalidConcurrencyLimit,
 
     /// An `INTERACTION_CREATE` payload could not be decoded.
@@ -137,6 +141,12 @@ pub enum Error {
     /// An operation required an acknowledgement, but the interaction is still pending.
     #[error("interaction has not been acknowledged")]
     InteractionNotAcknowledged,
+
+    /// Discord may have applied a response mutation whose outcome is unknown.
+    #[error(
+        "interaction response state is uncertain; reconcile the original response before retrying"
+    )]
+    InteractionResponseStateUnknown,
 
     /// A second initial acknowledgement or deferral was attempted.
     #[error("interaction has already been acknowledged")]

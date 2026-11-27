@@ -1,8 +1,18 @@
-use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
+use std::{
+    collections::{BTreeMap, BTreeSet, btree_map::Entry},
+    sync::LazyLock,
+};
 
-use gloamwire::model::ApplicationCommandOptionType;
+use gloamwire::model::{ApplicationCommandNumericValue, ApplicationCommandOptionType};
+use regex::Regex;
+use tokio::sync::Semaphore;
 
-use crate::{Error, Result, SlashCommand};
+use crate::{CommandChoiceValue, CommandOptionDescriptor, Error, Result, SlashCommand};
+
+static COMMAND_NAME: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^[-_'\p{L}\p{N}\p{sc=Deva}\p{sc=Thai}]{1,32}$")
+        .expect("Discord command name regex must be valid")
+});
 
 /// Deterministic registry of slash commands keyed by Discord command name.
 pub struct CommandRegistry<D> {
@@ -63,6 +73,7 @@ impl<D> Default for CommandRegistry<D> {
 
 fn validate_hierarchy<D>(command: &SlashCommand<D>) -> Result<()> {
     let root = command.descriptor().name;
+    validate_node(command, root)?;
     if command.is_leaf() {
         return validate_leaf(command, root);
     }
@@ -78,11 +89,15 @@ fn validate_children<D>(
     parent_path: &[&'static str],
     depth: usize,
 ) -> Result<()> {
+    if children.len() > 25 {
+        return Err(Error::InvalidCommandHierarchy(parent_path.join(" ")));
+    }
     let mut names = BTreeSet::new();
 
     for child in children {
         let name = child.descriptor().name;
         let path = format_path(parent_path, name);
+        validate_node(child, &path)?;
         if !names.insert(name) {
             return Err(Error::DuplicateCommandPath(path));
         }
@@ -111,7 +126,10 @@ fn validate_leaf<D>(command: &SlashCommand<D>, path: &str) -> Result<()> {
     let policy = command
         .policy()
         .expect("leaf commands always carry an execution policy");
-    if policy.max_concurrent_executions() == Some(0) {
+    if policy
+        .max_concurrent_executions()
+        .is_some_and(|limit| limit == 0 || limit > Semaphore::MAX_PERMITS)
+    {
         return Err(Error::InvalidCommandPolicy(path.to_owned()));
     }
 
@@ -155,7 +173,121 @@ fn validate_leaf<D>(command: &SlashCommand<D>, path: &str) -> Result<()> {
         }
     }
 
+    validate_options(options, path)
+}
+
+fn validate_node<D>(command: &SlashCommand<D>, path: &str) -> Result<()> {
+    let descriptor = command.descriptor();
+    if !valid_name(descriptor.name) || !valid_description(descriptor.description) {
+        return Err(Error::InvalidCommandDescriptor(path.to_owned()));
+    }
     Ok(())
+}
+
+fn valid_name(name: &str) -> bool {
+    COMMAND_NAME.is_match(name) && name.to_lowercase() == name
+}
+
+fn valid_description(description: &str) -> bool {
+    (1..=100).contains(&description.chars().count())
+}
+
+fn validate_options(options: &[CommandOptionDescriptor], path: &str) -> Result<()> {
+    if options.len() > 25 {
+        return Err(Error::InvalidCommandDescriptor(path.to_owned()));
+    }
+    let mut names = BTreeSet::new();
+    let mut optional_seen = false;
+    for option in options {
+        if !valid_name(option.name)
+            || !valid_description(option.description)
+            || !names.insert(option.name)
+            || (option.required && optional_seen)
+            || !valid_option(option)
+        {
+            return Err(Error::InvalidCommandDescriptor(format!(
+                "{path} {}",
+                option.name
+            )));
+        }
+        optional_seen |= !option.required;
+    }
+    Ok(())
+}
+
+fn valid_option(option: &CommandOptionDescriptor) -> bool {
+    use ApplicationCommandOptionType as Kind;
+    if !matches!(
+        option.kind,
+        Kind::STRING
+            | Kind::BOOLEAN
+            | Kind::INTEGER
+            | Kind::NUMBER
+            | Kind::USER
+            | Kind::CHANNEL
+            | Kind::ROLE
+            | Kind::MENTIONABLE
+            | Kind::ATTACHMENT
+    ) {
+        return false;
+    }
+    if option.choices.len() > 25 {
+        return false;
+    }
+    if option.min_length.is_some_and(|n| n > 6000)
+        || option.max_length.is_some_and(|n| !(1..=6000).contains(&n))
+        || option
+            .min_length
+            .zip(option.max_length)
+            .is_some_and(|(min, max)| min > max)
+        || (option.kind != Kind::STRING
+            && (option.min_length.is_some() || option.max_length.is_some()))
+    {
+        return false;
+    }
+
+    let mut bounds = [None; 2];
+    for (index, value) in [option.min_value, option.max_value].into_iter().enumerate() {
+        if let Some(value) = value {
+            let number = match (option.kind, value) {
+                (Kind::INTEGER, ApplicationCommandNumericValue::Integer(n))
+                    if (-9_007_199_254_740_991..=9_007_199_254_740_991).contains(&n) =>
+                {
+                    n as f64
+                }
+                (Kind::NUMBER, ApplicationCommandNumericValue::Number(n))
+                    if (-9_007_199_254_740_992.0..=9_007_199_254_740_992.0).contains(&n) =>
+                {
+                    n
+                }
+                _ => return false,
+            };
+            bounds[index] = Some(number);
+        }
+    }
+    if bounds[0].zip(bounds[1]).is_some_and(|(min, max)| min > max) {
+        return false;
+    }
+    let mut choice_names = BTreeSet::new();
+    for (index, choice) in option.choices.iter().enumerate() {
+        if !valid_description(choice.name)
+            || !choice_names.insert(choice.name)
+            || option.choices[..index]
+                .iter()
+                .any(|previous| previous.value == choice.value)
+        {
+            return false;
+        }
+        match (option.kind, choice.value) {
+            (Kind::STRING, CommandChoiceValue::String(value)) if value.chars().count() <= 100 => {}
+            (Kind::INTEGER, CommandChoiceValue::Integer(value))
+                if (-9_007_199_254_740_991..=9_007_199_254_740_991).contains(&value) => {}
+            (Kind::NUMBER, CommandChoiceValue::Number(value))
+                if (-9_007_199_254_740_992.0..=9_007_199_254_740_992.0).contains(&value) => {}
+            _ => return false,
+        }
+    }
+    true
 }
 
 fn format_path(parent: &[&str], child: &str) -> String {
@@ -214,6 +346,41 @@ mod tests {
 
     fn autocomplete_handler(_ctx: AutocompleteContext<()>) -> AutocompleteFuture {
         Box::pin(async { Ok(Vec::new()) })
+    }
+
+    #[test]
+    fn rejects_invalid_manual_descriptor() {
+        static INVALID: CommandDescriptor = CommandDescriptor::new("UPPER", "Invalid");
+        let mut registry = CommandRegistry::new();
+        assert!(matches!(
+            registry.insert(SlashCommand::new(&INVALID, handler)),
+            Err(Error::InvalidCommandDescriptor(path)) if path == "UPPER"
+        ));
+    }
+
+    #[test]
+    fn rejects_duplicate_manual_options() {
+        static OPTIONS: &[CommandOptionDescriptor] = &[
+            CommandOptionDescriptor::new(
+                "value",
+                "First",
+                ApplicationCommandOptionType::STRING,
+                true,
+            ),
+            CommandOptionDescriptor::new(
+                "value",
+                "Second",
+                ApplicationCommandOptionType::STRING,
+                true,
+            ),
+        ];
+        static INVALID: CommandDescriptor =
+            CommandDescriptor::new("invalid", "Invalid").with_options(OPTIONS);
+        let mut registry = CommandRegistry::new();
+        assert!(matches!(
+            registry.insert(SlashCommand::new(&INVALID, handler)),
+            Err(Error::InvalidCommandDescriptor(path)) if path == "invalid value"
+        ));
     }
 
     #[test]

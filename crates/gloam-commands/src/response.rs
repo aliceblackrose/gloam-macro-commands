@@ -11,6 +11,7 @@ use crate::{Context, Error, Result};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ResponseState {
     Pending,
+    Unknown,
     Deferred { ephemeral: bool },
     Responded,
     Deleted,
@@ -62,6 +63,7 @@ impl ResponseState {
     fn reply_action(self, ephemeral: bool) -> Result<ReplyAction> {
         match self {
             Self::Pending => Ok(ReplyAction::Initial { ephemeral }),
+            Self::Unknown => Err(Error::InteractionResponseStateUnknown),
             Self::Deferred {
                 ephemeral: deferred_ephemeral,
             } => {
@@ -74,12 +76,69 @@ impl ResponseState {
         }
     }
 
-    const fn is_acknowledged(self) -> bool {
-        !matches!(self, Self::Pending)
+    fn begin(&mut self) -> Self {
+        std::mem::replace(self, Self::Unknown)
+    }
+
+    fn finish<T>(&mut self, previous: Self, next: Self, result: gloamwire::Result<T>) -> Result<T> {
+        match result {
+            Ok(value) => {
+                *self = next;
+                Ok(value)
+            }
+            Err(error) => {
+                // Only a definitive local validation failure or Discord form
+                // rejection proves that the attempted mutation did not occur.
+                if definitely_rejected(&error) {
+                    *self = previous;
+                }
+                Err(error.into())
+            }
+        }
+    }
+}
+
+fn definitely_rejected(error: &gloamwire::Error) -> bool {
+    match error {
+        gloamwire::Error::InvalidRestRequest(_) => true,
+        gloamwire::Error::DiscordApi { status, error } => {
+            status.as_u16() == 400 && error.code == 50035
+        }
+        gloamwire::Error::HttpStatus { status, code, .. } => {
+            status.as_u16() == 400 && *code == Some(50035)
+        }
+        _ => false,
     }
 }
 
 impl<D> Context<D> {
+    /// Reconciles an uncertain response state by retrieving the original response.
+    ///
+    /// Call after an interrupted or ambiguous REST mutation. A successful lookup
+    /// restores the state from Discord's message flags. A failed lookup leaves
+    /// the state uncertain; absence alone cannot prove that no acknowledgement
+    /// was sent. No automatic retry of a potentially successful mutation occurs.
+    pub async fn reconcile_response(&self) -> Result<()> {
+        let mut state = self.response_state().lock().await;
+        if *state != ResponseState::Unknown {
+            return Ok(());
+        }
+        let interaction = self.interaction();
+        let message = self
+            .rest()
+            .get_original_interaction_response(interaction.application_id, &interaction.token)
+            .await?;
+        let flags = message.flags.unwrap_or_else(MessageFlags::empty);
+        *state = if flags.contains(MessageFlags::LOADING) {
+            ResponseState::Deferred {
+                ephemeral: flags.contains(MessageFlags::EPHEMERAL),
+            }
+        } else {
+            ResponseState::Responded
+        };
+        Ok(())
+    }
+
     /// Sends a public interaction response.
     ///
     /// The first reply acknowledges a pending interaction. A reply after a
@@ -177,16 +236,18 @@ impl<D> Context<D> {
         let mut state = self.response_state().lock().await;
         match *state {
             ResponseState::Pending => return Err(Error::InteractionNotAcknowledged),
+            ResponseState::Unknown => return Err(Error::InteractionResponseStateUnknown),
             ResponseState::Deleted => return Err(Error::OriginalResponseDeleted),
             ResponseState::Deferred { .. } | ResponseState::Responded => {}
         }
 
         let interaction = self.interaction();
-        self.rest()
+        let previous = state.begin();
+        let result = self
+            .rest()
             .delete_original_interaction_response(interaction.application_id, &interaction.token)
-            .await?;
-        *state = ResponseState::Deleted;
-        Ok(())
+            .await;
+        state.finish(previous, ResponseState::Deleted, result)
     }
 
     /// Creates a public interaction followup message.
@@ -235,28 +296,32 @@ impl<D> Context<D> {
             ReplyAction::Initial { ephemeral } => {
                 let interaction = self.interaction();
                 let response = InteractionResponse::message(payload.into_message_data(ephemeral));
-                self.rest()
+                let previous = state.begin();
+                let result = self
+                    .rest()
                     .create_interaction_response(
                         interaction.id,
                         &interaction.token,
                         &response,
                         &CreateInteractionResponseQuery::default(),
                     )
-                    .await?;
-                *state = ResponseState::Responded;
+                    .await;
+                state.finish(previous, ResponseState::Responded, result)?;
             }
             ReplyAction::CompleteDeferred => {
                 let interaction = self.interaction();
                 let edit = payload.into_edit();
-                self.rest()
+                let previous = state.begin();
+                let result = self
+                    .rest()
                     .edit_original_interaction_response(
                         interaction.application_id,
                         &interaction.token,
                         &edit,
                         &EditInteractionMessageQuery::default(),
                     )
-                    .await?;
-                *state = ResponseState::Responded;
+                    .await;
+                state.finish(previous, ResponseState::Responded, result)?;
             }
             ReplyAction::Followup { ephemeral } => {
                 let interaction = self.interaction();
@@ -275,6 +340,9 @@ impl<D> Context<D> {
 
     async fn defer_inner(&self, ephemeral: bool) -> Result<()> {
         let mut state = self.response_state().lock().await;
+        if *state == ResponseState::Unknown {
+            return Err(Error::InteractionResponseStateUnknown);
+        }
         if !matches!(*state, ResponseState::Pending) {
             return Err(Error::InteractionAlreadyAcknowledged);
         }
@@ -293,15 +361,17 @@ impl<D> Context<D> {
             InteractionResponse::new(InteractionCallbackType::DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE)
         };
 
-        self.rest()
+        let previous = state.begin();
+        let result = self
+            .rest()
             .create_interaction_response(
                 interaction.id,
                 &interaction.token,
                 &response,
                 &CreateInteractionResponseQuery::default(),
             )
-            .await?;
-        *state = ResponseState::Deferred { ephemeral };
+            .await;
+        state.finish(previous, ResponseState::Deferred { ephemeral }, result)?;
         Ok(())
     }
 
@@ -309,13 +379,15 @@ impl<D> Context<D> {
         let mut state = self.response_state().lock().await;
         match *state {
             ResponseState::Pending => return Err(Error::InteractionNotAcknowledged),
+            ResponseState::Unknown => return Err(Error::InteractionResponseStateUnknown),
             ResponseState::Deleted => return Err(Error::OriginalResponseDeleted),
             ResponseState::Deferred { .. } | ResponseState::Responded => {}
         }
 
         let interaction = self.interaction();
         let edit = payload.into_edit();
-        let message = self
+        let previous = state.begin();
+        let result = self
             .rest()
             .edit_original_interaction_response(
                 interaction.application_id,
@@ -323,21 +395,31 @@ impl<D> Context<D> {
                 &edit,
                 &EditInteractionMessageQuery::default(),
             )
-            .await?;
-
-        if matches!(*state, ResponseState::Deferred { .. }) {
-            *state = ResponseState::Responded;
-        }
-        Ok(message)
+            .await;
+        state.finish(previous, ResponseState::Responded, result)
     }
 
     async fn followup_inner(&self, payload: MessagePayload, ephemeral: bool) -> Result<Message> {
-        let acknowledged = self.response_state().lock().await.is_acknowledged();
-        if !acknowledged {
-            return Err(Error::InteractionNotAcknowledged);
-        }
-
+        let mut state = self.response_state().lock().await;
         let interaction = self.interaction();
+        match state.reply_action(ephemeral)? {
+            ReplyAction::Initial { .. } => return Err(Error::InteractionNotAcknowledged),
+            ReplyAction::CompleteDeferred => {
+                let previous = state.begin();
+                let result = self
+                    .rest()
+                    .edit_original_interaction_response(
+                        interaction.application_id,
+                        &interaction.token,
+                        &payload.into_edit(),
+                        &EditInteractionMessageQuery::default(),
+                    )
+                    .await;
+                return state.finish(previous, ResponseState::Responded, result);
+            }
+            ReplyAction::Followup { .. } => {}
+        }
+        drop(state);
         Ok(self
             .rest()
             .create_followup_message(
@@ -389,6 +471,37 @@ mod tests {
                 .expect("followup after delete"),
             ReplyAction::Followup { ephemeral: false }
         );
+    }
+
+    #[test]
+    fn interrupted_mutation_blocks_new_acknowledgements() {
+        let mut state = ResponseState::Pending;
+        let previous = state.begin();
+        assert_eq!(previous, ResponseState::Pending);
+        assert!(matches!(
+            state.reply_action(false),
+            Err(Error::InteractionResponseStateUnknown)
+        ));
+        let result = state.finish(
+            previous,
+            ResponseState::Responded,
+            Ok::<_, gloamwire::Error>(()),
+        );
+        assert!(result.is_ok());
+        assert_eq!(state, ResponseState::Responded);
+    }
+
+    #[test]
+    fn definitive_local_rejection_restores_previous_state() {
+        let mut state = ResponseState::Pending;
+        let previous = state.begin();
+        let result = state.finish::<()>(
+            previous,
+            ResponseState::Responded,
+            Err(gloamwire::Error::InvalidRestRequest("invalid".to_owned())),
+        );
+        assert!(result.is_err());
+        assert_eq!(state, ResponseState::Pending);
     }
 
     #[test]

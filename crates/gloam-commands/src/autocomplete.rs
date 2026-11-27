@@ -102,7 +102,7 @@ pub struct AutocompleteContext<D> {
     interaction: Arc<Interaction>,
     command_data: Arc<ApplicationCommandInteractionData>,
     command_path: Arc<[&'static str]>,
-    command_options: Arc<[ApplicationCommandInteractionDataOption]>,
+    option_depth: usize,
     focused_index: usize,
     shard_id: Option<ShardId>,
 }
@@ -113,7 +113,7 @@ impl<D> AutocompleteContext<D> {
         interaction: Arc<Interaction>,
         command_data: Arc<ApplicationCommandInteractionData>,
         command_path: Vec<&'static str>,
-        command_options: Vec<ApplicationCommandInteractionDataOption>,
+        option_depth: usize,
         focused_index: usize,
         shard_id: Option<ShardId>,
     ) -> Self {
@@ -122,7 +122,7 @@ impl<D> AutocompleteContext<D> {
             interaction,
             command_data,
             command_path: command_path.into(),
-            command_options: command_options.into(),
+            option_depth,
             focused_index,
             shard_id,
         }
@@ -171,13 +171,17 @@ impl<D> AutocompleteContext<D> {
     /// extraction semantics yet.
     #[must_use]
     pub fn command_options(&self) -> CommandOptions<'_> {
-        CommandOptions::from_slice(&self.command_options)
+        CommandOptions::from_slice(self.leaf_options())
     }
 
     /// Returns the single option currently focused by Discord.
     #[must_use]
     pub fn focused_option(&self) -> &ApplicationCommandInteractionDataOption {
-        &self.command_options[self.focused_index]
+        &self.leaf_options()[self.focused_index]
+    }
+
+    fn leaf_options(&self) -> &[ApplicationCommandInteractionDataOption] {
+        crate::options::leaf_options(&self.command_data, self.option_depth)
     }
 
     /// Returns the registered name of the focused option.
@@ -212,7 +216,7 @@ impl<D> Clone for AutocompleteContext<D> {
             interaction: Arc::clone(&self.interaction),
             command_data: Arc::clone(&self.command_data),
             command_path: Arc::clone(&self.command_path),
-            command_options: Arc::clone(&self.command_options),
+            option_depth: self.option_depth,
             focused_index: self.focused_index,
             shard_id: self.shard_id,
         }

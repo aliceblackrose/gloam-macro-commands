@@ -56,7 +56,7 @@ where
 
 Returning `Ok(())` marks the execution error as handled for the spawned command task. Returning an error propagates that error from `CommandTask::join()`.
 
-The framework does not install a default user-facing error response. Applications remain responsible for deciding whether failures should become an ephemeral reply, structured application telemetry, or another response policy.
+Apart from bounded managed-mode capacity rejection acknowledgements, the framework does not install a default user-facing error response. Applications remain responsible for deciding whether failures should become an ephemeral reply, structured application telemetry, or another response policy.
 
 ## Optional tracing
 
@@ -78,4 +78,4 @@ Framework lifecycle events currently expose only the resolved static command pat
 - response bodies;
 - application state.
 
-This restriction is enforced structurally by the internal observability API: lifecycle logging helpers receive only `&[&'static str]`. The framework also avoids formatting execution errors into its built-in tracing events because downstream error variants can contain user-controlled option names or transport details. Applications that log errors in a custom `command_error_handler` should apply their own data-classification and redaction policy.
+This restriction is enforced structurally by the internal observability API: lifecycle logging helpers receive only `&[&'static str]`, and managed dispatch diagnostics use fixed event messages. Managed task failures (including join errors), malformed interactions and capacity rejection are observable without logging tokens, option values or error payloads. The framework also avoids formatting execution errors into its built-in tracing events because downstream error variants can contain user-controlled option names or transport details. Applications that log errors in a custom `command_error_handler` should apply their own data-classification and redaction policy.

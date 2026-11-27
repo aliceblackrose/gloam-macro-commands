@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     future::Future,
     pin::Pin,
     sync::Arc,
@@ -55,7 +55,7 @@ pub struct CommandPolicy<D> {
     member_permissions: Option<Permissions>,
     bot_permissions: Option<Permissions>,
     cooldown: Option<Duration>,
-    cooldowns: Mutex<HashMap<UserId, Instant>>,
+    cooldowns: Mutex<Cooldowns>,
     max_concurrency: Option<usize>,
     command_slots: Option<Arc<Semaphore>>,
 }
@@ -70,7 +70,7 @@ impl<D> CommandPolicy<D> {
             member_permissions: None,
             bot_permissions: None,
             cooldown: None,
-            cooldowns: Mutex::new(HashMap::new()),
+            cooldowns: Mutex::new(Cooldowns::default()),
             max_concurrency: None,
             command_slots: None,
         }
@@ -121,12 +121,13 @@ impl<D> CommandPolicy<D> {
 
     /// Sets an additional per-command concurrency limit.
     ///
-    /// The global framework limit still applies. A zero value is rejected when
-    /// the command tree is registered.
+    /// The global framework limit still applies. Zero and limits exceeding
+    /// Tokio's semaphore capacity are rejected when the command tree is registered.
     #[must_use]
     pub fn max_concurrency(mut self, limit: usize) -> Self {
         self.max_concurrency = Some(limit);
-        self.command_slots = Some(Arc::new(Semaphore::new(limit)));
+        self.command_slots =
+            (limit > 0 && limit <= Semaphore::MAX_PERMITS).then(|| Arc::new(Semaphore::new(limit)));
         self
     }
 
@@ -243,23 +244,54 @@ impl<D> CommandPolicy<D> {
             })
             .ok_or_else(|| Error::CommandUserUnavailable(command_path(context)))?;
 
+        let mut cooldowns = self.cooldowns.lock().await;
+        // Sample the clock inside the lock so reservations are ordered by expiry.
         let now = Instant::now();
         let ready_at = now
             .checked_add(duration)
             .ok_or_else(|| Error::InvalidCommandPolicy(command_path(context)))?;
-        let mut cooldowns = self.cooldowns.lock().await;
 
-        if let Some(deadline) = cooldowns.get(&user_id)
-            && *deadline > now
-        {
-            return Err(Error::CommandOnCooldown {
+        cooldowns
+            .reserve(user_id, now, ready_at)
+            .map_err(|retry_after| Error::CommandOnCooldown {
                 path: command_path(context),
-                retry_after: deadline.saturating_duration_since(now),
-            });
+                retry_after,
+            })
+    }
+}
+
+// The policy's duration is fixed once shared. Reservations therefore expire
+// in insertion order, allowing amortized O(1) eviction instead of scanning
+// the entire user map on every accepted invocation.
+#[derive(Default)]
+struct Cooldowns {
+    deadlines: HashMap<UserId, Instant>,
+    expirations: VecDeque<(Instant, UserId)>,
+}
+
+impl Cooldowns {
+    fn reserve(
+        &mut self,
+        user_id: UserId,
+        now: Instant,
+        ready_at: Instant,
+    ) -> std::result::Result<(), Duration> {
+        while let Some(&(deadline, expired_user)) = self.expirations.front() {
+            if deadline > now {
+                break;
+            }
+            self.expirations.pop_front();
+            self.deadlines.remove(&expired_user);
         }
 
-        cooldowns.insert(user_id, ready_at);
-        cooldowns.retain(|_, deadline| *deadline > now);
+        if let Some(deadline) = self.deadlines.get(&user_id) {
+            return Err(deadline.saturating_duration_since(now));
+        }
+
+        if ready_at > now {
+            self.deadlines.insert(user_id, ready_at);
+            self.expirations.push_back((ready_at, user_id));
+        }
         Ok(())
     }
 }
@@ -272,4 +304,52 @@ impl<D> Default for CommandPolicy<D> {
 
 fn command_path<D>(context: &Context<D>) -> String {
     context.command_path().join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cooldown_expiry_evicts_only_expired_users() {
+        let mut cooldowns = Cooldowns::default();
+        let first = UserId::new(1);
+        let second = UserId::new(2);
+        let now = Instant::now();
+        let duration = Duration::from_secs(10);
+        let later = now + Duration::from_secs(1);
+
+        assert_eq!(cooldowns.reserve(first, now, now + duration), Ok(()));
+        assert_eq!(
+            cooldowns.reserve(first, later, later + duration),
+            Err(Duration::from_secs(9))
+        );
+        assert_eq!(cooldowns.reserve(second, later, later + duration), Ok(()));
+
+        let expiry = now + duration;
+        assert_eq!(cooldowns.reserve(first, expiry, expiry + duration), Ok(()));
+        assert_eq!(cooldowns.deadlines.len(), 2);
+        assert_eq!(cooldowns.expirations.len(), 2);
+        assert_eq!(
+            cooldowns.reserve(second, expiry, expiry + duration),
+            Err(Duration::from_secs(1))
+        );
+
+        let after = expiry + duration;
+        assert_eq!(cooldowns.reserve(first, after, after + duration), Ok(()));
+        assert_eq!(cooldowns.deadlines.len(), 1);
+        assert_eq!(cooldowns.expirations.len(), 1);
+    }
+
+    #[test]
+    fn zero_duration_does_not_store_cooldowns() {
+        let mut cooldowns = Cooldowns::default();
+        let user = UserId::new(1);
+        let now = Instant::now();
+
+        assert_eq!(cooldowns.reserve(user, now, now), Ok(()));
+        assert_eq!(cooldowns.reserve(user, now, now), Ok(()));
+        assert!(cooldowns.deadlines.is_empty());
+        assert!(cooldowns.expirations.is_empty());
+    }
 }

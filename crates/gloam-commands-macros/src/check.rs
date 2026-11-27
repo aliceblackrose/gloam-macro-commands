@@ -22,12 +22,14 @@ pub(crate) fn expand(attribute: TokenStream, item: TokenStream) -> Result<TokenS
     let helper_suffix = function_name.unraw().to_string();
     let handler_name = format_ident!("__gloam_check_{helper_suffix}", span = function_name.span());
 
+    let context_ident = format_ident!("__gloam_context", span = proc_macro2::Span::mixed_site());
+
     Ok(quote! {
         #function
 
         #[doc(hidden)]
-        #visibility fn #handler_name(ctx: #context_type) -> ::gloam_commands::CheckFuture {
-            ::std::boxed::Box::pin(#function_name(ctx))
+        #visibility fn #handler_name(#context_ident: #context_type) -> ::gloam_commands::CheckFuture {
+            ::std::boxed::Box::pin(#function_name(#context_ident))
         }
     })
 }
