@@ -15,6 +15,7 @@ tracing = ["dep:tracing", "gloamwire/tracing"]
 gloamwire.workspace = true
 gloam-commands-macros.workspace = true
 serde_json.workspace = true
+regex.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing = { workspace = true, optional = true }
