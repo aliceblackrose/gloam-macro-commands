@@ -31,18 +31,16 @@ impl<D> Context<D> {
         runtime: Runtime<D>,
         interaction: Interaction,
         command_data: ApplicationCommandInteractionData,
-        command_path: Vec<&'static str>,
+        command_path: [&'static str; 3],
         option_depth: usize,
         shard_id: Option<ShardId>,
     ) -> Self {
-        let mut path = [""; 3];
-        path[..command_path.len()].copy_from_slice(&command_path);
         Self {
             inner: Arc::new(ContextInner {
                 runtime,
                 interaction,
                 command_data,
-                command_path: path,
+                command_path,
                 option_depth,
                 response_state: Mutex::new(ResponseState::Pending),
             }),

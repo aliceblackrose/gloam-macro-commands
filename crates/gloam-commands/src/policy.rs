@@ -186,12 +186,7 @@ impl<D> CommandPolicy<D> {
         self.command_slots.as_ref()
     }
 
-    fn authorize(
-        &self,
-        interaction: &gloamwire::model::Interaction,
-        path: &[&str],
-    ) -> Result<()> {
-
+    fn authorize(&self, interaction: &gloamwire::model::Interaction, path: &[&str]) -> Result<()> {
         if !self.contexts.is_empty()
             && interaction
                 .context

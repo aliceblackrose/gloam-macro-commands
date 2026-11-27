@@ -60,6 +60,7 @@ struct CommandArgs {
     name: Option<LitStr>,
     description: Option<LitStr>,
     checks: Vec<Path>,
+    autocomplete_checks: Vec<Path>,
     contexts: Vec<CommandContext>,
     guild_only: Option<Ident>,
     member_permissions: Option<Expr>,
@@ -73,6 +74,7 @@ impl Parse for CommandArgs {
         let mut name = None;
         let mut description = None;
         let mut checks = Vec::new();
+        let mut autocomplete_checks = Vec::new();
         let mut check_names = HashSet::new();
         let mut contexts = Vec::new();
         let mut context_kinds = HashSet::new();
@@ -109,6 +111,10 @@ impl Parse for CommandArgs {
                         return Err(Error::new_spanned(path, "duplicate command check"));
                     }
                     checks.push(path);
+                } else if key == "autocomplete_check" {
+                    let path = input.parse::<Path>()?;
+                    validate_handler_path(&path, &key, "autocomplete_check")?;
+                    autocomplete_checks.push(path);
                 } else if key == "context" {
                     let value = input.parse::<LitStr>()?;
                     let context = CommandContext::parse(&value)?;
@@ -160,7 +166,7 @@ impl Parse for CommandArgs {
                 } else {
                     return Err(Error::new(
                         key.span(),
-                        "unsupported command argument; expected `name`, `description`, `check`, `context`, `guild_only`, `member_permissions`, `bot_permissions`, `cooldown`, or `max_concurrency`",
+                        "unsupported command argument; expected `name`, `description`, `check`, `autocomplete_check`, `context`, `guild_only`, `member_permissions`, `bot_permissions`, `cooldown`, or `max_concurrency`",
                     ));
                 }
             }
@@ -184,6 +190,7 @@ impl Parse for CommandArgs {
             name,
             description,
             checks,
+            autocomplete_checks,
             contexts,
             guild_only,
             member_permissions,
@@ -303,6 +310,7 @@ pub(crate) fn expand(attribute: TokenStream, item: TokenStream) -> Result<TokenS
         name,
         description,
         checks,
+        autocomplete_checks,
         contexts,
         guild_only,
         member_permissions,
@@ -388,6 +396,7 @@ pub(crate) fn expand(attribute: TokenStream, item: TokenStream) -> Result<TokenS
     };
 
     let has_policy = !checks.is_empty()
+        || !autocomplete_checks.is_empty()
         || !contexts.is_empty()
         || guild_only.is_some()
         || member_permissions.is_some()
@@ -420,6 +429,11 @@ pub(crate) fn expand(attribute: TokenStream, item: TokenStream) -> Result<TokenS
         );
         policy = quote! {
             (#policy).check(::gloam_commands::CheckDescriptor::new(#check_name, #adapter))
+        };
+    }
+    for check in &autocomplete_checks {
+        policy = quote! {
+            (#policy).autocomplete_check(|ctx| ::std::boxed::Box::pin(#check(ctx)))
         };
     }
     if let Some(seconds) = cooldown_seconds {

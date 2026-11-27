@@ -130,6 +130,10 @@ pub enum Error {
     #[error("application-command interaction is missing command data")]
     MissingApplicationCommandData,
 
+    /// Submitted options contain unknown names, duplicates, or an invalid shape.
+    #[error("invalid submitted slash-command option structure")]
+    InvalidSubmittedOptions,
+
     /// A required slash-command option was not submitted.
     #[error("missing required slash-command option `{0}`")]
     MissingOption(&'static str),

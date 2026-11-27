@@ -7,12 +7,14 @@ use gloamwire::{
     },
     http::CreateInteractionResponseQuery,
     model::{
-        ApplicationCommandChoiceValue, ApplicationCommandInteractionDataOption,
+        ApplicationCommandChoiceValue, ApplicationCommandInteractionData,
+        ApplicationCommandInteractionDataOption,
         ApplicationCommandOptionChoice, ApplicationCommandOptionType, ApplicationCommandType,
         ApplicationId, AutocompleteInteractionCallbackData, Interaction, InteractionCallbackData,
         InteractionCallbackType, InteractionResponse, InteractionType,
     },
 };
+use serde::Deserialize;
 use tokio::{
     runtime::Handle,
     sync::{Semaphore, TryAcquireError},
@@ -197,9 +199,7 @@ where
             return Ok(PreparedDispatch::Ignored);
         }
 
-        let TypedDispatchEvent::InteractionCreate(interaction) = dispatch.typed()? else {
-            return Ok(PreparedDispatch::Ignored);
-        };
+        let interaction = Interaction::deserialize(&dispatch.data)?;
         if interaction.kind != InteractionType::APPLICATION_COMMAND
             && interaction.kind != InteractionType::APPLICATION_COMMAND_AUTOCOMPLETE
         {
@@ -207,9 +207,12 @@ where
         }
 
         let interaction_kind = interaction.kind;
-        let command_data = interaction
-            .application_command_data()?
-            .ok_or(Error::MissingApplicationCommandData)?;
+        let command_data = ApplicationCommandInteractionData::deserialize(
+            interaction
+                .data
+                .as_ref()
+                .ok_or(Error::MissingApplicationCommandData)?,
+        )?;
         if command_data.kind != ApplicationCommandType::CHAT_INPUT {
             return Ok(PreparedDispatch::Ignored);
         }
@@ -219,22 +222,22 @@ where
         };
         let resolved = resolve_command(command, &command_data.options)?;
         let descriptor = resolved.command.descriptor();
-        let option_depth = resolved.path.len() - 1;
+        let option_depth = resolved.depth;
+        let path = &resolved.path[..=option_depth];
         let focused_index = if interaction_kind == InteractionType::APPLICATION_COMMAND_AUTOCOMPLETE
         {
-            Some(focused_option_index(resolved.options, &resolved.path)?)
+            Some(focused_option_index(resolved.options, path)?)
         } else {
             None
         };
         let runtime = self.runtime(rest.clone());
-        let interaction = *interaction;
         if let Some(focused_index) = focused_index {
             let focused = &resolved.options[focused_index];
             let Some(option_descriptor) = descriptor.options.iter().find(|option| {
                 option.name == focused.name && option.kind == focused.kind && option.autocomplete
             }) else {
                 return Err(Error::UnknownAutocompleteOption {
-                    path: resolved.path.join(" "),
+                    path: path.join(" "),
                     option: focused.name.clone(),
                 });
             };
@@ -242,9 +245,13 @@ where
                 .command
                 .autocomplete_handler(option_descriptor.name)
                 .ok_or_else(|| Error::UnknownAutocompleteOption {
-                    path: resolved.path.join(" "),
+                    path: path.join(" "),
                     option: focused.name.clone(),
                 })?;
+            let policy = resolved
+                .command
+                .shared_policy()
+                .ok_or_else(|| Error::UnknownCommandPath(path.join(" ")))?;
             let path = resolved.path;
             let context = AutocompleteContext::new(
                 runtime,
@@ -259,9 +266,7 @@ where
             return Ok(PreparedDispatch::Autocomplete(PreparedAutocomplete {
                 command_name: descriptor.name,
                 option_kind: option_descriptor.kind,
-                policy: resolved.command.shared_policy().ok_or_else(|| {
-                    Error::UnknownCommandPath(context.command_path().join(" "))
-                })?,
+                policy,
                 timeout: self.autocomplete_timeout,
                 handler,
                 context,
@@ -272,11 +277,11 @@ where
         let handler = resolved
             .command
             .handler()
-            .ok_or_else(|| Error::UnknownCommandPath(resolved.path.join(" ")))?;
+            .ok_or_else(|| Error::UnknownCommandPath(path.join(" ")))?;
         let policy = resolved
             .command
             .shared_policy()
-            .ok_or_else(|| Error::UnknownCommandPath(resolved.path.join(" ")))?;
+            .ok_or_else(|| Error::UnknownCommandPath(path.join(" ")))?;
         let path = resolved.path;
         let context = Context::new(
             runtime,
@@ -292,6 +297,7 @@ where
             handler,
             policy,
             timeout: self.command_timeout,
+            options: descriptor.options,
             context,
             command_slots: Arc::clone(&self.command_slots),
             before_hooks: Arc::clone(&self.before_hooks),
@@ -524,7 +530,8 @@ impl<D> FrameworkBuilder<D> {
 
 struct ResolvedCommand<'a, D> {
     command: &'a SlashCommand<D>,
-    path: Vec<&'static str>,
+    path: [&'static str; 3],
+    depth: usize,
     options: &'a [ApplicationCommandInteractionDataOption],
 }
 
@@ -532,16 +539,17 @@ fn resolve_command<'a, D>(
     command: &'a SlashCommand<D>,
     submitted: &'a [ApplicationCommandInteractionDataOption],
 ) -> Result<ResolvedCommand<'a, D>> {
-    let mut path = vec![command.descriptor().name];
+    let mut path = [command.descriptor().name, "", ""];
     if command.is_leaf() {
         return Ok(ResolvedCommand {
             command,
             path,
+            depth: 0,
             options: submitted,
         });
     }
 
-    let branch = only_branch(submitted, &path)?;
+    let branch = only_branch(submitted, &path[..1])?;
     let Some(child) = command
         .children()
         .iter()
@@ -549,27 +557,28 @@ fn resolve_command<'a, D>(
     else {
         return Err(Error::UnknownCommandPath(format!(
             "{} {}",
-            path.join(" "),
+            path[0],
             branch.name
         )));
     };
-    path.push(child.descriptor().name);
+    path[1] = child.descriptor().name;
 
     if child.is_leaf() {
         if branch.kind != ApplicationCommandOptionType::SUB_COMMAND {
-            return Err(Error::UnknownCommandPath(path.join(" ")));
+            return Err(Error::UnknownCommandPath(path[..2].join(" ")));
         }
         return Ok(ResolvedCommand {
             command: child,
             path,
+            depth: 1,
             options: &branch.options,
         });
     }
 
     if branch.kind != ApplicationCommandOptionType::SUB_COMMAND_GROUP {
-        return Err(Error::UnknownCommandPath(path.join(" ")));
+        return Err(Error::UnknownCommandPath(path[..2].join(" ")));
     }
-    let nested = only_branch(&branch.options, &path)?;
+    let nested = only_branch(&branch.options, &path[..2])?;
     let Some(leaf) = child
         .children()
         .iter()
@@ -577,11 +586,11 @@ fn resolve_command<'a, D>(
     else {
         return Err(Error::UnknownCommandPath(format!(
             "{} {}",
-            path.join(" "),
+            path[..2].join(" "),
             nested.name
         )));
     };
-    path.push(leaf.descriptor().name);
+    path[2] = leaf.descriptor().name;
     if !leaf.is_leaf() || nested.kind != ApplicationCommandOptionType::SUB_COMMAND {
         return Err(Error::UnknownCommandPath(path.join(" ")));
     }
@@ -589,6 +598,7 @@ fn resolve_command<'a, D>(
     Ok(ResolvedCommand {
         command: leaf,
         path,
+        depth: 2,
         options: &nested.options,
     })
 }
@@ -625,6 +635,7 @@ struct PreparedCommand<D> {
     handler: CommandHandler<D>,
     policy: Arc<CommandPolicy<D>>,
     timeout: Duration,
+    options: &'static [crate::CommandOptionDescriptor],
     context: Context<D>,
     command_slots: Arc<Semaphore>,
     before_hooks: Arc<[CommandHook<D>]>,
@@ -641,6 +652,7 @@ where
             handler,
             policy,
             timeout,
+            options,
             context,
             command_slots,
             before_hooks,
@@ -670,6 +682,7 @@ where
                 execute_command(
                     handler,
                     policy,
+                    options,
                     context,
                     before_hooks,
                     after_hooks,
@@ -685,6 +698,7 @@ where
 async fn execute_command<D>(
     handler: CommandHandler<D>,
     policy: Arc<CommandPolicy<D>>,
+    options: &'static [crate::CommandOptionDescriptor],
     context: Context<D>,
     before_hooks: Arc<[CommandHook<D>]>,
     after_hooks: Arc<[CommandHook<D>]>,
@@ -696,6 +710,7 @@ where
     observability::command_started(context.command_path());
 
     let result = async {
+        context.command_options().validate(options)?;
         policy.evaluate(&context).await?;
 
         for hook in before_hooks.iter().copied() {
